@@ -79,7 +79,10 @@ def show_activity() -> None:
 
 def peek_screen() -> None:
     req = urllib.request.Request(
-        f"{BASE}/phone/peek-enqueue?token={TOKEN}", method="POST", data=b"",
+        f"{BASE}/phone/peek-enqueue",
+        headers={"X-Auth-Token": TOKEN},
+        method="POST",
+        data=b"",
     )
     try:
         urllib.request.urlopen(req, timeout=5)
@@ -91,7 +94,10 @@ def peek_screen() -> None:
 
 def summon() -> None:
     req = urllib.request.Request(
-        f"{BASE}/phone/summon?token={TOKEN}", method="POST", data=b"",
+        f"{BASE}/phone/summon",
+        headers={"X-Auth-Token": TOKEN},
+        method="POST",
+        data=b"",
     )
     try:
         urllib.request.urlopen(req, timeout=5)

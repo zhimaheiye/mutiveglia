@@ -87,6 +87,9 @@ class State:
         self.data_dir = Path(data_dir).resolve()
         self.shots_dir = self.data_dir / "screenshots"
         self.shots_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir = here / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        self.log_file = logs_dir / "veglia-server.log"
         self.commands: list[str] = []
         self.commands_lock = Lock()
         self.activity: list[dict] = []
@@ -111,7 +114,14 @@ class Handler(BaseHTTPRequestHandler):
         return bool(self.state.token) and supplied == self.state.token
 
     def log_message(self, fmt: str, *args) -> None:
-        sys.stderr.write("[veglia] %s - %s\n" % (self.address_string(), fmt % args))
+        line = "[veglia] %s - %s\n" % (self.address_string(), fmt % args)
+        sys.stderr.write(line)
+        if hasattr(self.state, "log_file") and self.state.log_file:
+            try:
+                with open(self.state.log_file, "a", encoding="utf-8") as f:
+                    f.write(line)
+            except Exception:
+                pass
 
     # -- routes ---------------------------------------------------------------
     def do_GET(self) -> None:
@@ -262,13 +272,21 @@ def main() -> None:
         sys.exit(1)
     Handler.state = state
     server = ThreadingHTTPServer((state.host, state.port), Handler)
-    print("=" * 52)
-    print(f"  Veglia · watch over — by Evelyn & River  v{VERSION}")
-    print(f"  listening on http://{state.host}:{state.port}")
-    print(f"  screenshots → {state.shots_dir}  (keep {state.keep})")
-    if state.hook:
-        print(f"  on-shot hook → {state.hook} <path>")
-    print("=" * 52)
+    banner = (
+        "=" * 52 + "\n"
+        f"  Veglia · watch over — by Evelyn & River  v{VERSION}\n"
+        f"  listening on http://{state.host}:{state.port}\n"
+        f"  screenshots → {state.shots_dir}  (keep {state.keep})\n"
+        + (f"  on-shot hook → {state.hook} <path>\n" if state.hook else "")
+        + "=" * 52 + "\n"
+    )
+    print(banner, end="")
+    if getattr(state, "log_file", None):
+        try:
+            with open(state.log_file, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Server started\n" + banner)
+        except Exception:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:

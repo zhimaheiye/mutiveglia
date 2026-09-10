@@ -142,8 +142,9 @@ public class ScreenshotService extends AccessibilityService {
                 body.put("event", "switch");
 
                 conn = (HttpURLConnection) new URL(
-                        serverUrl + "/phone/activity?token=" + token).openConnection();
+                        serverUrl + "/phone/activity").openConnection();
                 conn.setRequestMethod("POST");
+                conn.setRequestProperty("X-Auth-Token", token);
                 conn.setDoOutput(true);
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
@@ -212,9 +213,10 @@ public class ScreenshotService extends AccessibilityService {
 
     private void uploadScreenshot(byte[] data, String serverUrl, String token) {
         try {
-            String urlStr = serverUrl + "/phone/screenshot?token=" + token;
+            String urlStr = serverUrl + "/phone/screenshot";
             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
             conn.setRequestMethod("POST");
+            conn.setRequestProperty("X-Auth-Token", token);
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "image/jpeg");
             conn.setRequestProperty("Content-Length", String.valueOf(data.length));

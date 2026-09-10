@@ -141,8 +141,9 @@ public class CompanionService extends Service {
     }
 
     private String pollServer() throws Exception {
-        String urlStr = serverUrl + "/phone/poll?token=" + token;
+        String urlStr = serverUrl + "/phone/poll";
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        conn.setRequestProperty("X-Auth-Token", token);
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(15000);
         conn.setRequestMethod("GET");

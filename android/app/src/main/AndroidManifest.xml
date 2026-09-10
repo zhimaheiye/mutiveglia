@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.veglia.companion">
 
+    <uses-sdk
+        android:minSdkVersion="30"
+        android:targetSdkVersion="33" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -10,7 +14,8 @@
     <application
         android:label="Veglia"
         android:icon="@drawable/ic_launcher"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"

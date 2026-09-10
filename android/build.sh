@@ -35,32 +35,72 @@ $BUILD_TOOLS/aapt2 link \
     -R $OUT/compiled_res/*.flat
 
 echo "=== Compiling Java ==="
-find $SRC/java -name "*.java" > $OUT/sources.txt
-echo "$OUT/gen/$PKG_PATH/R.java" >> $OUT/sources.txt
+
+# Windows Git Bash compatibility:
+# javac.exe cannot correctly consume MSYS paths such as /d/veglia/...
+# Convert every Java source and javac path to native Windows paths.
+
+find "$SRC/java" -name "*.java" | while IFS= read -r file; do
+    cygpath -w "$file"
+done > "$OUT/sources.txt"
+
+cygpath -w "$OUT/gen/$PKG_PATH/R.java" >> "$OUT/sources.txt"
+
+PLATFORM_WIN="$(cygpath -w "$PLATFORM")"
+CLASSES_WIN="$(cygpath -w "$OUT/classes")"
+SOURCES_WIN="$(cygpath -w "$OUT/sources.txt")"
+
 javac \
+    -encoding UTF-8 \
     -source 11 -target 11 \
-    -classpath $PLATFORM \
-    -d $OUT/classes \
-    @$OUT/sources.txt
+    -classpath "$PLATFORM_WIN" \
+    -d "$CLASSES_WIN" \
+    @"$SOURCES_WIN"
 
 echo "=== Creating DEX ==="
-$BUILD_TOOLS/d8 \
-    --output $OUT/apk/ \
-    --lib $PLATFORM \
-    $(find $OUT/classes -name "*.class")
+
+# Windows Git Bash compatibility:
+# Android SDK on Windows provides d8.bat / apksigner.bat.
+# Convert paths passed into Windows-native tools.
+
+APK_OUT_WIN="$(cygpath -w "$OUT/apk")"
+PLATFORM_WIN="$(cygpath -w "$PLATFORM")"
+
+CLASS_FILES_WIN=()
+while IFS= read -r file; do
+    CLASS_FILES_WIN+=("$(cygpath -w "$file")")
+done < <(find "$OUT/classes" -name "*.class")
+
+"$BUILD_TOOLS/d8.bat" \
+    --output "$APK_OUT_WIN" \
+    --lib "$PLATFORM_WIN" \
+    "${CLASS_FILES_WIN[@]}"
 
 echo "=== Building APK ==="
-cd $OUT/apk
+cd "$OUT/apk"
+
 cp app.unsigned.apk app.tmp.apk
-zip -d app.tmp.apk classes.dex 2>/dev/null || true
-zip -j app.tmp.apk classes.dex
+
+JAR_TOOL="$JAVA_HOME/bin/jar.exe"
+
+if [ ! -f "$JAR_TOOL" ]; then
+    echo "ERROR: jar.exe not found: $JAR_TOOL"
+    exit 1
+fi
+
+# 将 D8 生成的 classes.dex 加入/替换到 APK 根目录
+"$JAR_TOOL" uf app.tmp.apk classes.dex
+
 mv app.tmp.apk app.unsigned.apk
 
 echo "=== Generating DEBUG signing key (throwaway; replace for release) ==="
-DEBUG_KS=$OUT/debug.jks
-if [ ! -f $DEBUG_KS ]; then
+
+DEBUG_KS="$PROJECT/debug.jks"
+DEBUG_KS_WIN="$(cygpath -w "$DEBUG_KS")"
+
+if [ ! -f "$DEBUG_KS" ]; then
     keytool -genkeypair -v \
-        -keystore $DEBUG_KS \
+        -keystore "$DEBUG_KS_WIN" \
         -keyalg RSA -keysize 2048 \
         -validity 10000 \
         -alias veglia \
@@ -70,18 +110,26 @@ if [ ! -f $DEBUG_KS ]; then
 fi
 
 echo "=== Aligning ==="
-$BUILD_TOOLS/zipalign -f 4 app.unsigned.apk app.aligned.apk
+
+"$BUILD_TOOLS/zipalign.exe" \
+    -f 4 \
+    app.unsigned.apk \
+    app.aligned.apk
 
 echo "=== Signing (debug) ==="
-$BUILD_TOOLS/apksigner sign \
-    --ks $DEBUG_KS \
+
+APK_FINAL_WIN="$(cygpath -w "$PROJECT/Veglia.apk")"
+APK_ALIGNED_WIN="$(cygpath -w "$OUT/apk/app.aligned.apk")"
+
+"$BUILD_TOOLS/apksigner.bat" sign \
+    --ks "$DEBUG_KS_WIN" \
     --ks-pass pass:veglia-debug \
     --key-pass pass:veglia-debug \
     --ks-key-alias veglia \
-    --out $PROJECT/Veglia.apk \
-    app.aligned.apk
+    --out "$APK_FINAL_WIN" \
+    "$APK_ALIGNED_WIN"
 
 echo ""
 echo "=== Done! ==="
 echo "APK: $PROJECT/Veglia.apk"
-ls -lh $PROJECT/Veglia.apk
+ls -lh "$PROJECT/Veglia.apk"

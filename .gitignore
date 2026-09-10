@@ -16,3 +16,13 @@ android/build/
 # python
 __pycache__/
 *.pyc
+
+# logs
+*.log
+server/logs/
+logs/
+
+# backups & temp
+*.bak
+*.backup
+*.pre-v2-backup
