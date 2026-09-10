@@ -17,8 +17,10 @@ import veglia_tools
 mcp = MCPServer(
     "veglia-phone",
     instructions=(
-        "Tools for reading the owner's Android phone context through Veglia. "
-        "Prefer get_phone_activity before taking a screenshot. "
+        "Tools for perceiving the owner's context through Veglia. "
+        "Provides Android companion phone state (foreground apps, on-demand screenshots) "
+        "and this local Windows desktop state (active window, process, title, user idle time). "
+        "Prefer get_phone_activity or get_desktop_activity for lightweight awareness. "
         "Only use summon_phone_ai when the user explicitly requests it "
         "or an established automation policy authorizes it."
     )

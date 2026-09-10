@@ -101,6 +101,17 @@ def _query_process_name(pid: int) -> str:
     return f"pid:{pid}"
 
 
+def _ensure_default_desktop() -> None:
+    """Ensure the calling thread is attached to the user interactive desktop (WinSta0\\Default)."""
+    try:
+        user32 = ctypes.windll.user32
+        h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+        if h_desk:
+            user32.SetThreadDesktop(h_desk)
+    except Exception:
+        pass
+
+
 def _get_foreground_info() -> dict[str, Any] | None:
     """
     Return info about the current foreground window, or None on failure.
@@ -111,6 +122,10 @@ def _get_foreground_info() -> dict[str, Any] | None:
     """
     try:
         hwnd = win32gui.GetForegroundWindow()
+        if not hwnd:
+            _ensure_default_desktop()
+            hwnd = win32gui.GetForegroundWindow()
+
         if not hwnd:
             return None
 
@@ -250,10 +265,15 @@ class DesktopCollector:
     # ------------------------------------------------------------------
 
     def _poll_loop(self) -> None:
+        _ensure_default_desktop()
         last_app: str | None = None
 
         while not self._stop_event.is_set():
             info = _get_foreground_info()
+            if not info:
+                _ensure_default_desktop()
+                info = _get_foreground_info()
+
             if info:
                 app = info["app"]
                 if app != last_app:

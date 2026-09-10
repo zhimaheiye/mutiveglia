@@ -90,6 +90,10 @@ class State:
         logs_dir = here / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = logs_dir / "veglia-server.log"
+        if sys.stdout is None:
+            sys.stdout = open(self.log_file, "a", encoding="utf-8", buffering=1)
+        if sys.stderr is None:
+            sys.stderr = open(self.log_file, "a", encoding="utf-8", buffering=1)
         self.commands: list[str] = []
         self.commands_lock = Lock()
         self.activity: list[dict] = []
@@ -115,7 +119,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:
         line = "[veglia] %s - %s\n" % (self.address_string(), fmt % args)
-        sys.stderr.write(line)
+        if sys.stderr:
+            try:
+                sys.stderr.write(line)
+            except Exception:
+                pass
         if hasattr(self.state, "log_file") and self.state.log_file:
             try:
                 with open(self.state.log_file, "a", encoding="utf-8") as f:

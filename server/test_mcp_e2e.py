@@ -1,9 +1,9 @@
-"""
+r"""
 MCP Protocol E2E test for Veglia Desktop Collector.
 
 Runs from the server/ directory using the local .venv-mcp Python.
 Usage:
-    D:\\veglia\\.venv-mcp\\Scripts\\python.exe test_mcp_e2e.py
+    ..\.venv-mcp\Scripts\python.exe test_mcp_e2e.py
 
 What it tests:
   1. Start veglia_mcp.py as a stdio subprocess

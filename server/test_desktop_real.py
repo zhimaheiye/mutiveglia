@@ -1,9 +1,9 @@
-"""
+r"""
 Quick validation: run this directly in a terminal (not via AGY tool runner)
 to verify that desktop_collector can see real foreground windows.
 
 Usage:
-  D:\\mutiveglia\\.venv-mcp\\Scripts\\python.exe D:\\mutiveglia\\server\\test_desktop_real.py
+  ..\.venv-mcp\Scripts\python.exe test_desktop_real.py
 
 Note: this script is Windows-only and must be run in an interactive desktop
 session (not via SSH or a headless CI runner).

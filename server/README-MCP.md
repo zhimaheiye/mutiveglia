@@ -20,25 +20,25 @@ AI Agent (Antigravity / Codex / Claude Desktop / Cursor 等)
 
 ## Agent 配置接入示例
 
-在 Agent 的 MCP 客户端配置中添加如下条目：
+在 Agent 的 MCP 客户端配置中添加如下条目（将 `<repo_root>` 替换为实际本地代码目录路径，例如 `D:\\veglia` 或 `D:\\mutiveglia`）：
 
 ```json
 {
   "mcpServers": {
     "veglia": {
-      "command": "D:\\veglia\\.venv-mcp\\Scripts\\python.exe",
+      "command": "<repo_root>\\.venv-mcp\\Scripts\\python.exe",
       "args": [
-        "D:\\veglia\\server\\veglia_mcp.py"
+        "<repo_root>\\server\\veglia_mcp.py"
       ],
-      "cwd": "D:\\veglia\\server"
+      "cwd": "<repo_root>\\server"
     }
   }
 }
 ```
 
 注意：
-- 鉴权令牌 `VEGLIA_TOKEN` 由 `veglia_tools.py` 自动从本地 `D:\veglia\server\.env` 文件加载，无需在 MCP 配置中明文暴露。
-- 服务工作目录必须指定为 `D:\veglia\server`，以保证正确加载 `.env` 及数据目录。
+- 鉴权令牌 `VEGLIA_TOKEN` 由 `veglia_tools.py` 自动从本地 `server/.env` 文件加载，无需在 MCP 配置中明文暴露。
+- 服务工作目录必须指定为 `server/` 所在目录，以保证正确加载 `.env` 及数据目录。
 
 ## 注册工具说明
 
@@ -55,3 +55,6 @@ AI Agent (Antigravity / Codex / Claude Desktop / Cursor 等)
 4. `summon_phone_ai`:
    - 拉起手机端伴侣 AI 应用；
    - 具有明显前台打断性，仅在明确指令下调用。
+5. `get_desktop_activity`:
+   - 读取当前 Windows 桌面状态：前台应用进程名、窗口标题、PID、键鼠空闲时间（`idle_seconds`）以及最近的窗口切换历史；
+   - 本地轻量只读工具，低延迟感知用户在台式机上的当前工作上下文。

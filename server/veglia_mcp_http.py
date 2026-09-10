@@ -16,9 +16,18 @@ from starlette.responses import JSONResponse
 from mcp.server.streamable_http import TransportSecuritySettings
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
 LOGS_DIR = HERE / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOGS_DIR / "veglia-mcp.log"
+
+# Protect against pythonw where sys.stdout / sys.stderr is None
+if sys.stdout is None:
+    sys.stdout = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
+if sys.stderr is None:
+    sys.stderr = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
 
 file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
 file_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s"))
@@ -39,6 +48,12 @@ ENDPOINT_PATH = os.environ.get("VEGLIA_MCP_PATH", "/mcp")
 
 
 def create_app():
+    if sys.platform == "win32":
+        import atexit
+        from desktop_collector import collector as _desktop_collector
+        _desktop_collector.start()
+        atexit.register(_desktop_collector.stop)
+
     # Build starlette app with DNS rebinding protection disabled for LAN / proxy access
     app = mcp.streamable_http_app(
         streamable_http_path=ENDPOINT_PATH,
@@ -61,6 +76,12 @@ def create_app():
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        import atexit
+        from desktop_collector import collector as _desktop_collector
+        _desktop_collector.start()
+        atexit.register(_desktop_collector.stop)
+
     app = create_app()
     print("=" * 52)
     print(f"  Veglia Streamable HTTP MCP Server")
@@ -74,7 +95,12 @@ def main() -> None:
         log_level="info",
     )
     server = uvicorn.Server(config)
-    server.run()
+    try:
+        server.run()
+    finally:
+        if sys.platform == "win32":
+            from desktop_collector import collector as _desktop_collector
+            _desktop_collector.stop()
 
 
 if __name__ == "__main__":
