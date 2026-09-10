@@ -64,5 +64,30 @@ def summon_phone_ai() -> dict:
     return veglia_tools.summon_phone_ai_result()
 
 
+@mcp.tool(
+    name="get_desktop_activity",
+    description=(
+        "Read current Windows desktop state: foreground process name, window title, "
+        "user idle time in seconds (keyboard/mouse inactivity), and recent window-switch history. "
+        "Use this to understand what the owner is currently doing on their computer. "
+        "Returns ok=false on non-Windows platforms."
+    )
+)
+def get_desktop_activity() -> dict:
+    """Return desktop foreground app, idle seconds, and recent window switch history."""
+    return veglia_tools.get_desktop_activity_result()
+
+
 if __name__ == "__main__":
+    # Desktop collector lifecycle:
+    # MCPServer (mcp SDK v2) has no on_startup/on_shutdown hooks.
+    # We start the collector explicitly here, and register stop via atexit.
+    # This runs only when the MCP server is launched as a process (not on import).
+    import atexit
+
+    if sys.platform == "win32":
+        from desktop_collector import collector as _desktop_collector
+        _desktop_collector.start()
+        atexit.register(_desktop_collector.stop)
+
     mcp.run(transport="stdio")

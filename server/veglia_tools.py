@@ -228,6 +228,31 @@ def summon_phone_ai_result() -> dict[str, Any]:
         }
 
 
+def get_desktop_activity_result() -> dict[str, Any]:
+    """
+    Return Windows desktop state snapshot for MCP consumption.
+
+    Delegates to desktop_collector.collector.snapshot().
+    The collector must have been started before calling this
+    (done in veglia_mcp.py __main__).
+    """
+    if sys.platform != "win32":
+        return {
+            "ok": False,
+            "tool": "get_desktop_activity",
+            "error": "desktop collector is Windows-only",
+        }
+    try:
+        from desktop_collector import collector  # local import — no startup side effect
+        return collector.snapshot()
+    except Exception as e:
+        return {
+            "ok": False,
+            "tool": "get_desktop_activity",
+            "error": str(e),
+        }
+
+
 def tool_status(args: argparse.Namespace) -> dict[str, Any]:
     return get_veglia_status_result()
 
@@ -271,6 +296,11 @@ def main() -> None:
     # summon
     p_summon = subparsers.add_parser("summon", help="Bring target AI app to the foreground")
     p_summon.set_defaults(func=tool_summon)
+
+    # desktop (Windows only)
+    if sys.platform == "win32":
+        p_desktop = subparsers.add_parser("desktop", help="Get current Windows desktop activity state")
+        p_desktop.set_defaults(func=lambda args: get_desktop_activity_result())
 
     args = parser.parse_args()
     res = args.func(args)
