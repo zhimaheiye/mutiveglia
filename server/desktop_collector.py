@@ -101,13 +101,35 @@ def _query_process_name(pid: int) -> str:
     return f"pid:{pid}"
 
 
+def _is_thread_on_default_desktop() -> bool:
+    """Return True if the current thread is already attached to the 'Default' desktop."""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        h_desk = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+        if not h_desk:
+            return False
+        buf = ctypes.create_unicode_buffer(256)
+        needed = ctypes.wintypes.DWORD()
+        # UOI_NAME = 2
+        if user32.GetUserObjectInformationW(h_desk, 2, buf, 256, ctypes.byref(needed)):
+            return buf.value.lower() == "default"
+    except Exception:
+        pass
+    return False
+
+
 def _ensure_default_desktop() -> None:
     """Ensure the calling thread is attached to the user interactive desktop (WinSta0\\Default)."""
+    if _is_thread_on_default_desktop():
+        return
     try:
         user32 = ctypes.windll.user32
         h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
         if h_desk:
-            user32.SetThreadDesktop(h_desk)
+            ok = user32.SetThreadDesktop(h_desk)
+            if not ok:
+                user32.CloseDesktop(h_desk)
     except Exception:
         pass
 
@@ -270,9 +292,6 @@ class DesktopCollector:
 
         while not self._stop_event.is_set():
             info = _get_foreground_info()
-            if not info:
-                _ensure_default_desktop()
-                info = _get_foreground_info()
 
             if info:
                 app = info["app"]

@@ -48,12 +48,6 @@ ENDPOINT_PATH = os.environ.get("VEGLIA_MCP_PATH", "/mcp")
 
 
 def create_app():
-    if sys.platform == "win32":
-        import atexit
-        from desktop_collector import collector as _desktop_collector
-        _desktop_collector.start()
-        atexit.register(_desktop_collector.stop)
-
     # Build starlette app with DNS rebinding protection disabled for LAN / proxy access
     app = mcp.streamable_http_app(
         streamable_http_path=ENDPOINT_PATH,
