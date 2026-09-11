@@ -21,102 +21,107 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build Veglia APK
+      - name: Configure Android SDK Environment
         run: |
-          set -ex
-          cd android
-          exec > >(tee build.log) 2>&1
-
-          PROJECT=$(pwd)
-          SRC=$PROJECT/app/src/main
-          OUT=$PROJECT/build
-
-          export ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
+          ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
           if [ -z "$ANDROID_HOME" ]; then
-              export ANDROID_HOME="/usr/local/lib/android/sdk"
+            ANDROID_HOME="/usr/local/lib/android/sdk"
           fi
-
+          
           if [ -d "$ANDROID_HOME/build-tools/34.0.0" ]; then
-              BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
+            BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
           else
-              BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+            BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
           fi
 
           if [ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]; then
-              PLATFORM="$ANDROID_HOME/platforms/android-34/android.jar"
+            PLATFORM="$ANDROID_HOME/platforms/android-34/android.jar"
           else
-              LATEST_PLAT=$(ls -d $ANDROID_HOME/platforms/android-* | sort -V | tail -n 1)
-              PLATFORM="$LATEST_PLAT/android.jar"
+            LATEST_PLAT=$(ls -d $ANDROID_HOME/platforms/android-* | sort -V | tail -n 1)
+            PLATFORM="$LATEST_PLAT/android.jar"
           fi
 
-          echo "=== Using build tools at $BUILD_TOOLS ==="
-          echo "=== Using platform at $PLATFORM ==="
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "BUILD_TOOLS=$BUILD_TOOLS" >> $GITHUB_ENV
+          echo "PLATFORM=$PLATFORM" >> $GITHUB_ENV
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/android" >> $GITHUB_ENV
+          echo "OUT_DIR=$GITHUB_WORKSPACE/android/build" >> $GITHUB_ENV
+          echo "SRC_DIR=$GITHUB_WORKSPACE/android/app/src/main" >> $GITHUB_ENV
+          
+          echo "=== Environment Info ==="
+          echo "Using BUILD_TOOLS: $BUILD_TOOLS"
+          echo "Using PLATFORM: $PLATFORM"
 
-          rm -rf "$OUT"
-          mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/apk"
+      - name: Compile resources (aapt2 compile)
+        run: |
+          rm -rf "$OUT_DIR"
+          mkdir -p "$OUT_DIR/gen" "$OUT_DIR/classes" "$OUT_DIR/apk" "$OUT_DIR/compiled_res"
+          "$BUILD_TOOLS/aapt2" compile --dir "$SRC_DIR/res" -o "$OUT_DIR/compiled_res/"
+          echo "Compiled resources:"
+          ls -la "$OUT_DIR/compiled_res"
 
-          echo "=== Compiling resources ==="
-          "$BUILD_TOOLS/aapt2" compile --dir "$SRC/res" -o "$OUT/compiled_res.zip"
-
-          echo "=== Linking resources ==="
+      - name: Link resources (aapt2 link)
+        run: |
           "$BUILD_TOOLS/aapt2" link \
-              -o "$OUT/apk/app.unsigned.apk" \
-              -I "$PLATFORM" \
-              --manifest "$SRC/AndroidManifest.xml" \
-              --java "$OUT/gen" \
-              --auto-add-overlay \
-              -R "$OUT/compiled_res.zip"
+            -o "$OUT_DIR/apk/app.unsigned.apk" \
+            -I "$PLATFORM" \
+            --manifest "$SRC_DIR/AndroidManifest.xml" \
+            --java "$OUT_DIR/gen" \
+            --auto-add-overlay \
+            "$OUT_DIR/compiled_res"/*.flat
+          echo "Generated APK:"
+          ls -lh "$OUT_DIR/apk/app.unsigned.apk"
+          echo "Generated Java files:"
+          find "$OUT_DIR/gen" -type f
 
-          echo "=== Compiling Java ==="
-          find "$SRC/java" -name "*.java" > "$OUT/sources.txt"
-          find "$OUT/gen" -name "*.java" >> "$OUT/sources.txt"
-          cat "$OUT/sources.txt"
+      - name: Compile Java (javac)
+        run: |
+          find "$SRC_DIR/java" -name "*.java" > "$OUT_DIR/sources.txt"
+          find "$OUT_DIR/gen" -name "*.java" >> "$OUT_DIR/sources.txt"
+          echo "Java source files to compile:"
+          cat "$OUT_DIR/sources.txt"
 
           javac \
-              -encoding UTF-8 \
-              -source 11 -target 11 \
-              -classpath "$PLATFORM" \
-              -d "$OUT/classes" \
-              @"$OUT/sources.txt"
+            -encoding UTF-8 \
+            -source 11 -target 11 \
+            -classpath "$PLATFORM" \
+            -d "$OUT_DIR/classes" \
+            @"$OUT_DIR/sources.txt"
+          echo "Compiled classes:"
+          find "$OUT_DIR/classes" -type f
 
-          echo "=== Creating DEX ==="
-          CLASS_FILES=($(find "$OUT/classes" -name "*.class"))
+      - name: Convert to DEX (d8)
+        run: |
+          jar cf "$OUT_DIR/classes.jar" -C "$OUT_DIR/classes" .
           "$BUILD_TOOLS/d8" \
-              --output "$OUT/apk/" \
-              --lib "$PLATFORM" \
-              "${CLASS_FILES[@]}"
+            --output "$OUT_DIR/apk/" \
+            --lib "$PLATFORM" \
+            "$OUT_DIR/classes.jar"
+          echo "Created DEX:"
+          ls -lh "$OUT_DIR/apk/classes.dex"
 
-          echo "=== Packaging APK ==="
-          cd "$OUT/apk"
+      - name: Package APK (jar)
+        run: |
+          cd "$OUT_DIR/apk"
           cp app.unsigned.apk app.tmp.apk
           jar uf app.tmp.apk classes.dex
           mv app.tmp.apk app.unsigned.apk
+          echo "Packaged unsigned APK:"
+          ls -lh app.unsigned.apk
 
-          echo "=== Aligning ==="
-          "$BUILD_TOOLS/zipalign" -f 4 app.unsigned.apk app.aligned.apk
-
-          echo "=== Signing with debug key ==="
-          DEBUG_KS="$PROJECT/debug.jks"
-          "$BUILD_TOOLS/apksigner" sign \
-              --ks "$DEBUG_KS" \
-              --ks-pass pass:veglia-debug \
-              --key-pass pass:veglia-debug \
-              --ks-key-alias veglia \
-              --out "$PROJECT/Veglia.apk" \
-              app.aligned.apk
-
-          echo "=== Done! ==="
-          ls -lh "$PROJECT/Veglia.apk"
-
-      - name: Report Build Log
-        if: always()
+      - name: Align and Sign APK (zipalign & apksigner)
         run: |
-          if [ -f android/build.log ]; then
-            echo "### Build Log" >> $GITHUB_STEP_SUMMARY
-            echo '```text' >> $GITHUB_STEP_SUMMARY
-            tail -n 100 android/build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
+          cd "$OUT_DIR/apk"
+          "$BUILD_TOOLS/zipalign" -f 4 app.unsigned.apk app.aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$PROJECT_DIR/debug.jks" \
+            --ks-pass pass:veglia-debug \
+            --key-pass pass:veglia-debug \
+            --ks-key-alias veglia \
+            --out "$PROJECT_DIR/Veglia.apk" \
+            app.aligned.apk
+          echo "Signed final APK:"
+          ls -lh "$PROJECT_DIR/Veglia.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
