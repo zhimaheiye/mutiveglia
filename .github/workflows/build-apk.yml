@@ -112,7 +112,24 @@ jobs:
       - name: Align and Sign APK (zipalign & apksigner)
         run: |
           cd "$OUT_DIR/apk"
+          echo "=== Zipalign ==="
           "$BUILD_TOOLS/zipalign" -f 4 app.unsigned.apk app.aligned.apk
+          ls -lh app.aligned.apk
+
+          echo "=== Checking Keystore ==="
+          if [ ! -f "$PROJECT_DIR/debug.jks" ]; then
+            echo "debug.jks not found, creating debug key..."
+            keytool -genkeypair -v \
+              -keystore "$PROJECT_DIR/debug.jks" \
+              -keyalg RSA -keysize 2048 \
+              -validity 10000 \
+              -alias veglia \
+              -storepass veglia-debug \
+              -keypass veglia-debug \
+              -dname "CN=Veglia Debug"
+          fi
+
+          echo "=== Signing APK ==="
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$PROJECT_DIR/debug.jks" \
             --ks-pass pass:veglia-debug \
@@ -120,6 +137,10 @@ jobs:
             --ks-key-alias veglia \
             --out "$PROJECT_DIR/Veglia.apk" \
             app.aligned.apk
+
+          echo "=== Verifying Signature ==="
+          "$BUILD_TOOLS/apksigner" verify -v "$PROJECT_DIR/Veglia.apk"
+
           echo "Signed final APK:"
           ls -lh "$PROJECT_DIR/Veglia.apk"
 
