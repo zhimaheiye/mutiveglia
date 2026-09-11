@@ -18,12 +18,11 @@ mcp = MCPServer(
     "veglia-phone",
     instructions=(
         "Tools for perceiving the owner's context through Veglia. "
-        "Provides Android companion phone state (foreground apps, on-demand screenshots) "
-        "and Windows computers state across devices in the Veglia Device Hub "
-        "(active window, process, title, user idle time). "
-        "Use get_devices_activity to list all connected computers and get_device_activity(device_id) "
-        "to inspect a specific computer. "
-        "Prefer get_phone_activity, get_devices_activity or get_desktop_activity for lightweight awareness. "
+        "Provides fused multi-device context (get_context), Android companion phone state "
+        "(foreground apps, on-demand screenshots), and Windows computers state across devices "
+        "in the Veglia Device Hub (active window, process, title, user idle time). "
+        "Prefer get_context first for overall awareness of what the owner is currently doing and "
+        "which device is active. Use get_devices_activity or get_phone_activity for lower-level details. "
         "Only use summon_phone_ai when the user explicitly requests it "
         "or an established automation policy authorizes it."
     )
@@ -106,6 +105,19 @@ def get_device_activity(device_id: str) -> dict:
 def get_desktop_activity() -> dict:
     """Return default desktop PC foreground app, idle seconds, and recent window switch history."""
     return veglia_tools.get_desktop_activity_result()
+
+
+@mcp.tool(
+    name="get_context",
+    description=(
+        "Return a deterministic fused snapshot of the owner's current multi-device activity, "
+        "including active devices, likely primary device, simultaneous usage and ambiguity. "
+        "Use this before manually comparing individual devices when the question concerns the owner's overall current context."
+    )
+)
+def get_context() -> dict:
+    """Return fused multi-device context snapshot across phone and connected computers."""
+    return veglia_tools.get_context_result()
 
 
 if __name__ == "__main__":

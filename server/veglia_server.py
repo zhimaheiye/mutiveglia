@@ -40,6 +40,8 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import parse_qs, unquote, urlparse
 
+from context_fusion import fuse_context
+
 # --- watermark / house numbers (511513) --------------------------------------
 # These constants carry the maker's mark. 8513, the 31 MiB cap, "keep 5" — they
 # aren't arbitrary. Change them if you like; they're just our fingerprints.
@@ -214,6 +216,29 @@ class Handler(BaseHTTPRequestHandler):
                     "last_seen": int(dev.get("last_seen", now) * 1000),
                 }
             self._json(200, detail)
+            return
+        if path == "/context":
+            if not self._token_ok():
+                self._json(403, {"error": ERR_BAD_TOKEN})
+                return
+            now_ms = int(time.time() * 1000)
+            with self.state.activity_lock:
+                current_phone = dict(self.state.current_activity)
+                phone_events = list(self.state.activity)
+            if current_phone.get("lastHeartbeatTs", 0) == 0 and phone_events:
+                latest = phone_events[-1]
+                current_phone = {
+                    "app": latest.get("app", "unknown"),
+                    "screenInteractive": True,
+                    "lastHeartbeatTs": latest.get("ts", 0),
+                }
+            phone_state = {"current": current_phone, "events": phone_events}
+
+            with self.state.devices_lock:
+                raw_devices = [dict(d) for d in self.state.devices.values()]
+
+            snapshot = fuse_context(phone_state, raw_devices, now_ms=now_ms)
+            self._json(200, snapshot)
             return
         self._json(404, {"error": ERR_BAD_METHOD})
 

@@ -50,6 +50,7 @@ EXPECTED_TOOLS = {
     "get_devices_activity",
     "get_device_activity",
     "get_desktop_activity",
+    "get_context",
 }
 
 
@@ -180,6 +181,29 @@ async def run_mcp_e2e() -> tuple[bool, dict | None]:
                     print(f"    FAIL: get_device_activity (desktop-pc) failed: {raw_desk}")
                     return False, None
                 print(f"    PASS  : device {raw_desk.get('device_id')} online={raw_desk.get('online')}")
+
+            # 6. tools/call get_context
+            print("[6] tools/call get_context ...")
+            call_ctx = await session.call_tool("get_context", arguments={})
+            raw_ctx = None
+            for item in (call_ctx.content or []):
+                if hasattr(item, "text"):
+                    try:
+                        raw_ctx = json.loads(item.text)
+                    except Exception:
+                        raw_ctx = item.text
+                    break
+            print(f"    context response:\n{json.dumps(raw_ctx, ensure_ascii=False, indent=6) if isinstance(raw_ctx, dict) else raw_ctx}")
+            if not isinstance(raw_ctx, dict) or not raw_ctx.get("ok"):
+                print(f"    FAIL: get_context failed: {raw_ctx}")
+                return False, None
+            assert raw_ctx.get("fusion_version") == "context-v1"
+            assert "active_devices" in raw_ctx
+            assert "primary_device" in raw_ctx
+            assert "simultaneous_usage" in raw_ctx
+            assert "devices" in raw_ctx
+            assert "reason_codes" in raw_ctx
+            print(f"    PASS  : get_context fusion_version={raw_ctx.get('fusion_version')}, active={raw_ctx.get('active_devices')}, primary={raw_ctx.get('primary_device')}")
 
             return True, raw
 

@@ -171,6 +171,30 @@ class DeviceRegistryTestCase(unittest.TestCase):
         self.assertEqual(dev["foreground"]["process_name"], "chrome.exe")
         self.assertEqual(dev["idle_seconds"], 120)
 
+    def test_get_context_endpoint(self):
+        # 1. Report an active desktop-pc
+        report_payload = {
+            "device_id": "desktop-pc",
+            "device_name": "台式机",
+            "device_type": "windows_pc",
+            "reported_at": int(time.time() * 1000),
+            "foreground": {"process_name": "code.exe", "window_title": "Editor", "pid": 100},
+            "idle_seconds": 2,
+            "recent_activity": [],
+        }
+        self._request("POST", "/devices/report", report_payload, token=self.token)
+
+        # 2. GET /context
+        status, body = self._request("GET", "/context", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("fusion_version"), "context-v1")
+        self.assertEqual(body.get("primary_device"), "desktop-pc")
+        self.assertEqual(body.get("active_devices"), ["desktop-pc"])
+        self.assertFalse(body.get("simultaneous_usage"))
+        self.assertFalse(body.get("ambiguous"))
+        self.assertIn("SINGLE_ACTIVE_DEVICE", body.get("reason_codes", []))
+
 
 if __name__ == "__main__":
     unittest.main()
