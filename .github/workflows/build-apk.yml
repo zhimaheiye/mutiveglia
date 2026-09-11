@@ -23,12 +23,13 @@ jobs:
 
       - name: Build Veglia APK
         run: |
-          set -e
+          set -ex
           cd android
+          exec > >(tee build.log) 2>&1
+
           PROJECT=$(pwd)
           SRC=$PROJECT/app/src/main
           OUT=$PROJECT/build
-          PKG_PATH=dev/veglia/companion
 
           export ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
           if [ -z "$ANDROID_HOME" ]; then
@@ -52,10 +53,10 @@ jobs:
           echo "=== Using platform at $PLATFORM ==="
 
           rm -rf "$OUT"
-          mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/apk" "$OUT/compiled_res"
+          mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/apk"
 
           echo "=== Compiling resources ==="
-          "$BUILD_TOOLS/aapt2" compile --dir "$SRC/res" -o "$OUT/compiled_res/"
+          "$BUILD_TOOLS/aapt2" compile --dir "$SRC/res" -o "$OUT/compiled_res.zip"
 
           echo "=== Linking resources ==="
           "$BUILD_TOOLS/aapt2" link \
@@ -64,11 +65,12 @@ jobs:
               --manifest "$SRC/AndroidManifest.xml" \
               --java "$OUT/gen" \
               --auto-add-overlay \
-              -R "$OUT/compiled_res"/*.flat
+              -R "$OUT/compiled_res.zip"
 
           echo "=== Compiling Java ==="
           find "$SRC/java" -name "*.java" > "$OUT/sources.txt"
-          echo "$OUT/gen/$PKG_PATH/R.java" >> "$OUT/sources.txt"
+          find "$OUT/gen" -name "*.java" >> "$OUT/sources.txt"
+          cat "$OUT/sources.txt"
 
           javac \
               -encoding UTF-8 \
@@ -78,10 +80,11 @@ jobs:
               @"$OUT/sources.txt"
 
           echo "=== Creating DEX ==="
+          CLASS_FILES=($(find "$OUT/classes" -name "*.class"))
           "$BUILD_TOOLS/d8" \
               --output "$OUT/apk/" \
               --lib "$PLATFORM" \
-              $(find "$OUT/classes" -name "*.class")
+              "${CLASS_FILES[@]}"
 
           echo "=== Packaging APK ==="
           cd "$OUT/apk"
@@ -104,6 +107,16 @@ jobs:
 
           echo "=== Done! ==="
           ls -lh "$PROJECT/Veglia.apk"
+
+      - name: Report Build Log
+        if: always()
+        run: |
+          if [ -f android/build.log ]; then
+            echo "### Build Log" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            tail -n 100 android/build.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
