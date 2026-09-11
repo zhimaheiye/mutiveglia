@@ -129,6 +129,7 @@ def get_phone_activity_result() -> dict[str, Any]:
         with urllib.request.urlopen(req, timeout=5) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
             raw_events = payload.get("events", [])
+            raw_current = payload.get("current")
     except Exception as e:
         return {
             "ok": False,
@@ -136,6 +137,7 @@ def get_phone_activity_result() -> dict[str, Any]:
             "error": str(e),
             "events": [],
             "most_recent": None,
+            "current": None,
         }
 
     formatted_events = []
@@ -151,9 +153,22 @@ def get_phone_activity_result() -> dict[str, Any]:
 
     most_recent = formatted_events[-1] if formatted_events else None
 
+    current = None
+    if isinstance(raw_current, dict):
+        cur_app = raw_current.get("app", "")
+        cur_ts = raw_current.get("lastHeartbeatTs", 0)
+        current = {
+            "app": cur_app,
+            "label": APP_LABELS.get(cur_app, cur_app),
+            "screenInteractive": bool(raw_current.get("screenInteractive", False)),
+            "lastHeartbeatTs": cur_ts,
+            "ago": format_ago(cur_ts) if cur_ts else "unknown",
+        }
+
     return {
         "ok": True,
         "tool": "get_phone_activity",
+        "current": current,
         "most_recent": most_recent,
         "events": list(reversed(formatted_events)),
     }

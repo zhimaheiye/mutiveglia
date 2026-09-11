@@ -79,6 +79,10 @@ public class ScreenshotService extends AccessibilityService {
     /** Last package we reported, so an in-app Activity hop isn't a "switch". */
     private String lastPkg = null;
 
+    public String getCurrentPkg() {
+        return lastPkg;
+    }
+
     /** Package name of the active keyboard, read once when the service connects. */
     private String imePkg;
 

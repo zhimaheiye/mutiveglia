@@ -98,6 +98,11 @@ class State:
         self.commands_lock = Lock()
         self.activity: list[dict] = []
         self.activity_lock = Lock()
+        self.current_activity: dict = {
+            "app": "unknown",
+            "screenInteractive": False,
+            "lastHeartbeatTs": 0,
+        }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -148,7 +153,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with self.state.activity_lock:
                 events = list(self.state.activity)
-            self._json(200, {"ok": True, "events": events})
+                current = dict(self.state.current_activity)
+                if current.get("lastHeartbeatTs", 0) == 0 and events:
+                    latest = events[-1]
+                    current = {
+                        "app": latest.get("app", "unknown"),
+                        "screenInteractive": True,
+                        "lastHeartbeatTs": latest.get("ts", 0),
+                    }
+            self._json(200, {"ok": True, "current": current, "events": events})
             return
         if path in ("/", "/health"):
             self._json(200, {"ok": True, "service": "veglia", "version": VERSION})
@@ -193,27 +206,34 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- activity -------------------------------------------------------------
     def _handle_activity(self) -> None:
-        """Record one foreground-app switch reported by the phone.
-
-        The phone already de-duplicates consecutive events for the same package,
-        so every entry that lands here is a real change of what she is looking at.
-        """
+        """Record one foreground-app switch or heartbeat reported by the phone."""
         length = int(self.headers.get("Content-Length", 0))
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except Exception:
             body = {}
-        entry = {
-            "ts": int(time.time() * 1000),
-            "app": str(body.get("app", "unknown")),
-            "event": str(body.get("event", "switch")),
-        }
-        cutoff = entry["ts"] - ACTIVITY_WINDOW_MS
+        now_ts = int(time.time() * 1000)
+        app_name = str(body.get("app", "unknown"))
+        event_type = str(body.get("event", "switch"))
+        is_interactive = bool(body.get("screenInteractive", True))
+
         with self.state.activity_lock:
-            self.state.activity.append(entry)
-            self.state.activity = [
-                e for e in self.state.activity if e["ts"] >= cutoff
-            ][-ACTIVITY_MAX:]
+            self.state.current_activity = {
+                "app": app_name,
+                "screenInteractive": is_interactive,
+                "lastHeartbeatTs": now_ts,
+            }
+            if event_type != "heartbeat":
+                entry = {
+                    "ts": now_ts,
+                    "app": app_name,
+                    "event": event_type,
+                }
+                cutoff = now_ts - ACTIVITY_WINDOW_MS
+                self.state.activity.append(entry)
+                self.state.activity = [
+                    e for e in self.state.activity if e["ts"] >= cutoff
+                ][-ACTIVITY_MAX:]
         self._json(200, {"ok": True})
 
     # -- screenshot -----------------------------------------------------------

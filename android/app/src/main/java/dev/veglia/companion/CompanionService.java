@@ -13,9 +13,13 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.PowerManager;
 
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+
+import org.json.JSONObject;
 
 public class CompanionService extends Service {
     private static final String CHANNEL_ID = "veglia_companion";
@@ -80,9 +84,13 @@ public class CompanionService extends Service {
         pollHandler.post(this::pollLoop);
     }
 
+    private long lastHeartbeatTs = 0;
+    private boolean lastReportedInteractive = false;
+
     private void pollLoop() {
         if (!running) return;
         try {
+            checkAndSendHeartbeat();
             String cmd = pollServer();
             if ("peek".equals(cmd)) {
                 ScreenshotService ss = ScreenshotService.getInstance();
@@ -97,6 +105,63 @@ public class CompanionService extends Service {
         if (running) {
             pollHandler.postDelayed(this::pollLoop, 3000);
         }
+    }
+
+    private void checkAndSendHeartbeat() {
+        if (serverUrl == null || token == null || serverUrl.isEmpty() || token.isEmpty()) {
+            return;
+        }
+        try {
+            ScreenshotService ss = ScreenshotService.getInstance();
+            String currentPkg = ss != null ? ss.getCurrentPkg() : null;
+            if (currentPkg == null || currentPkg.isEmpty()) {
+                return;
+            }
+
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            boolean isInteractive = pm != null && pm.isInteractive();
+            long now = System.currentTimeMillis();
+
+            boolean screenTurnedOff = lastReportedInteractive && !isInteractive;
+            boolean heartbeatDue = isInteractive && (now - lastHeartbeatTs >= 30000);
+
+            if (screenTurnedOff || heartbeatDue) {
+                sendHeartbeat(serverUrl, token, currentPkg, isInteractive);
+                lastHeartbeatTs = now;
+                lastReportedInteractive = isInteractive;
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void sendHeartbeat(String url, String tk, String pkg, boolean isInteractive) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                JSONObject body = new JSONObject();
+                body.put("app", pkg);
+                body.put("event", "heartbeat");
+                body.put("screenInteractive", isInteractive);
+
+                conn = (HttpURLConnection) new URL(url + "/phone/activity").openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("X-Auth-Token", tk);
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+
+                byte[] data = body.toString().getBytes("UTF-8");
+                conn.setFixedLengthStreamingMode(data.length);
+                OutputStream os = conn.getOutputStream();
+                os.write(data);
+                os.close();
+                conn.getResponseCode();
+            } catch (Exception ignored) {
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
     }
 
     /** Bring the app your AI lives in back to the front of the screen.
