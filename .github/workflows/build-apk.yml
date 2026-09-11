@@ -1,0 +1,113 @@
+name: Build Veglia APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build Veglia APK
+        run: |
+          set -e
+          cd android
+          PROJECT=$(pwd)
+          SRC=$PROJECT/app/src/main
+          OUT=$PROJECT/build
+          PKG_PATH=dev/veglia/companion
+
+          export ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
+          if [ -z "$ANDROID_HOME" ]; then
+              export ANDROID_HOME="/usr/local/lib/android/sdk"
+          fi
+
+          if [ -d "$ANDROID_HOME/build-tools/34.0.0" ]; then
+              BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
+          else
+              BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          fi
+
+          if [ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]; then
+              PLATFORM="$ANDROID_HOME/platforms/android-34/android.jar"
+          else
+              LATEST_PLAT=$(ls -d $ANDROID_HOME/platforms/android-* | sort -V | tail -n 1)
+              PLATFORM="$LATEST_PLAT/android.jar"
+          fi
+
+          echo "=== Using build tools at $BUILD_TOOLS ==="
+          echo "=== Using platform at $PLATFORM ==="
+
+          rm -rf "$OUT"
+          mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/apk" "$OUT/compiled_res"
+
+          echo "=== Compiling resources ==="
+          "$BUILD_TOOLS/aapt2" compile --dir "$SRC/res" -o "$OUT/compiled_res/"
+
+          echo "=== Linking resources ==="
+          "$BUILD_TOOLS/aapt2" link \
+              -o "$OUT/apk/app.unsigned.apk" \
+              -I "$PLATFORM" \
+              --manifest "$SRC/AndroidManifest.xml" \
+              --java "$OUT/gen" \
+              --auto-add-overlay \
+              -R "$OUT/compiled_res"/*.flat
+
+          echo "=== Compiling Java ==="
+          find "$SRC/java" -name "*.java" > "$OUT/sources.txt"
+          echo "$OUT/gen/$PKG_PATH/R.java" >> "$OUT/sources.txt"
+
+          javac \
+              -encoding UTF-8 \
+              -source 11 -target 11 \
+              -classpath "$PLATFORM" \
+              -d "$OUT/classes" \
+              @"$OUT/sources.txt"
+
+          echo "=== Creating DEX ==="
+          "$BUILD_TOOLS/d8" \
+              --output "$OUT/apk/" \
+              --lib "$PLATFORM" \
+              $(find "$OUT/classes" -name "*.class")
+
+          echo "=== Packaging APK ==="
+          cd "$OUT/apk"
+          cp app.unsigned.apk app.tmp.apk
+          jar uf app.tmp.apk classes.dex
+          mv app.tmp.apk app.unsigned.apk
+
+          echo "=== Aligning ==="
+          "$BUILD_TOOLS/zipalign" -f 4 app.unsigned.apk app.aligned.apk
+
+          echo "=== Signing with debug key ==="
+          DEBUG_KS="$PROJECT/debug.jks"
+          "$BUILD_TOOLS/apksigner" sign \
+              --ks "$DEBUG_KS" \
+              --ks-pass pass:veglia-debug \
+              --key-pass pass:veglia-debug \
+              --ks-key-alias veglia \
+              --out "$PROJECT/Veglia.apk" \
+              app.aligned.apk
+
+          echo "=== Done! ==="
+          ls -lh "$PROJECT/Veglia.apk"
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veglia-apk
+          path: android/Veglia.apk
+          retention-days: 14
