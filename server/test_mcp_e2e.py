@@ -17,12 +17,23 @@ MCP protocol layer is being tested here, not the interactive desktop observation
 """
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PYTHON_EXE = Path(sys.executable)          # use the same Python that runs this script
 SERVER_SCRIPT = HERE / "veglia_mcp.py"
+
+
+def _get_expected_device_id() -> str:
+    env_file = HERE / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("VEGLIA_DEVICE_ID=") and not line.startswith("#"):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return os.environ.get("VEGLIA_DEVICE_ID", "desktop-pc").strip()
 
 EXPECTED_TOOLS = {
     "get_veglia_status",
@@ -115,9 +126,10 @@ async def run_mcp_e2e() -> tuple[bool, dict | None]:
                 print("    FAIL: response not a dict")
                 return False, None
 
+            expected_device_id = _get_expected_device_id()
             assert raw.get("ok") is True
             assert raw.get("tool") == "get_desktop_activity"
-            assert raw.get("device_id") == "desktop-pc"
+            assert raw.get("device_id") == expected_device_id
             assert isinstance(raw.get("idle_seconds"), (int, float))
             assert raw.get("idle_seconds", -1) >= 0
             assert isinstance(raw.get("recent_activity"), list)
@@ -129,9 +141,9 @@ async def run_mcp_e2e() -> tuple[bool, dict | None]:
             print("    PASS")
             print()
 
-            # 5. tools/call get_device_activity (desktop-pc)
-            print("[5] tools/call get_device_activity (desktop-pc) ...")
-            call_single = await session.call_tool("get_device_activity", arguments={"device_id": "desktop-pc"})
+            # 5. tools/call get_device_activity (expected_device_id)
+            print(f"[5] tools/call get_device_activity ({expected_device_id}) ...")
+            call_single = await session.call_tool("get_device_activity", arguments={"device_id": expected_device_id})
             raw_single = None
             for item in (call_single.content or []):
                 if hasattr(item, "text"):
@@ -144,6 +156,23 @@ async def run_mcp_e2e() -> tuple[bool, dict | None]:
                 print(f"    FAIL: get_device_activity failed: {raw_single}")
                 return False, None
             print(f"    PASS  : device {raw_single.get('device_id')} online={raw_single.get('online')}")
+
+            # Also check desktop-pc if expected_device_id != desktop-pc
+            if expected_device_id != "desktop-pc":
+                print("[5b] tools/call get_device_activity (desktop-pc) ...")
+                call_desktop = await session.call_tool("get_device_activity", arguments={"device_id": "desktop-pc"})
+                raw_desk = None
+                for item in (call_desktop.content or []):
+                    if hasattr(item, "text"):
+                        try:
+                            raw_desk = json.loads(item.text)
+                        except Exception:
+                            raw_desk = item.text
+                        break
+                if not isinstance(raw_desk, dict) or not raw_desk.get("ok"):
+                    print(f"    FAIL: get_device_activity (desktop-pc) failed: {raw_desk}")
+                    return False, None
+                print(f"    PASS  : device {raw_desk.get('device_id')} online={raw_desk.get('online')}")
 
             return True, raw
 
