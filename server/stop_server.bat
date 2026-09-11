@@ -1,9 +1,12 @@
 @echo off
 title Stop Veglia Services
 cd /d "%~dp0"
-echo Stopping Veglia Server and MCP services...
+echo Stopping Veglia Server, MCP and Sensor services...
+schtasks /End /TN "VegliaDesktopSensor" >nul 2>&1
 schtasks /End /TN "VegliaServer" >nul 2>&1
 schtasks /End /TN "VegliaMCP" >nul 2>&1
+wmic process where "name='pythonw.exe' and commandline like '%%device_sensor.py%%'" call terminate >nul 2>&1
+wmic process where "name='python.exe' and commandline like '%%device_sensor.py%%'" call terminate >nul 2>&1
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8513" ^| findstr "LISTENING"') do (
     echo Stopping PID %%a on port 8513...
     taskkill /F /PID %%a >nul 2>&1
@@ -12,5 +15,5 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8514" ^| findstr "LISTENING
     echo Stopping PID %%a on port 8514...
     taskkill /F /PID %%a >nul 2>&1
 )
-echo Veglia Server (8513) and MCP (8514) stopped cleanly.
+echo Veglia Server (8513), MCP (8514) and Sensor stopped cleanly.
 pause

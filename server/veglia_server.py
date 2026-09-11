@@ -38,7 +38,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 # --- watermark / house numbers (511513) --------------------------------------
 # These constants carry the maker's mark. 8513, the 31 MiB cap, "keep 5" — they
@@ -103,6 +103,8 @@ class State:
             "screenInteractive": False,
             "lastHeartbeatTs": 0,
         }
+        self.devices: dict[str, dict] = {}
+        self.devices_lock = Lock()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -166,6 +168,53 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/health"):
             self._json(200, {"ok": True, "service": "veglia", "version": VERSION})
             return
+        if path == "/devices":
+            if not self._token_ok():
+                self._json(403, {"error": ERR_BAD_TOKEN})
+                return
+            now = time.time()
+            devs_summary = []
+            with self.state.devices_lock:
+                for dev in self.state.devices.values():
+                    age = max(0.0, round(now - dev.get("last_seen", now), 1))
+                    devs_summary.append({
+                        "device_id": dev["device_id"],
+                        "device_name": dev["device_name"],
+                        "device_type": dev["device_type"],
+                        "online": age <= 10.0,
+                        "age_seconds": age,
+                        "foreground": dev.get("foreground"),
+                        "idle_seconds": dev.get("idle_seconds", 0),
+                    })
+            self._json(200, {"ok": True, "devices": devs_summary})
+            return
+        if path.startswith("/devices/"):
+            if not self._token_ok():
+                self._json(403, {"error": ERR_BAD_TOKEN})
+                return
+            device_id = unquote(path[len("/devices/"):].strip())
+            now = time.time()
+            with self.state.devices_lock:
+                dev = self.state.devices.get(device_id)
+                if not dev:
+                    self._json(404, {"ok": False, "error": "device_not_found", "device_id": device_id})
+                    return
+                age = max(0.0, round(now - dev.get("last_seen", now), 1))
+                detail = {
+                    "ok": True,
+                    "device_id": dev["device_id"],
+                    "device_name": dev["device_name"],
+                    "device_type": dev["device_type"],
+                    "online": age <= 10.0,
+                    "age_seconds": age,
+                    "foreground": dev.get("foreground"),
+                    "idle_seconds": dev.get("idle_seconds", 0),
+                    "recent_activity": dev.get("recent_activity", []),
+                    "reported_at": dev.get("reported_at"),
+                    "last_seen": int(dev.get("last_seen", now) * 1000),
+                }
+            self._json(200, detail)
+            return
         self._json(404, {"error": ERR_BAD_METHOD})
 
     def do_POST(self) -> None:
@@ -202,7 +251,40 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._handle_activity()
             return
+        if path == "/devices/report":
+            if not self._token_ok():
+                self._json(403, {"error": ERR_BAD_TOKEN})
+                return
+            self._handle_device_report()
+            return
         self._json(404, {"error": ERR_BAD_METHOD})
+
+    # -- devices --------------------------------------------------------------
+    def _handle_device_report(self) -> None:
+        """Receive and register/update a device state report."""
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            body = {}
+        device_id = str(body.get("device_id", "")).strip()
+        if not device_id:
+            self._json(400, {"ok": False, "error": "missing_device_id"})
+            return
+
+        record = {
+            "device_id": device_id,
+            "device_name": str(body.get("device_name", device_id)).strip(),
+            "device_type": str(body.get("device_type", "windows_pc")).strip(),
+            "foreground": body.get("foreground"),
+            "idle_seconds": int(body.get("idle_seconds", 0)),
+            "recent_activity": body.get("recent_activity", []),
+            "reported_at": body.get("reported_at", int(time.time() * 1000)),
+            "last_seen": time.time(),
+        }
+        with self.state.devices_lock:
+            self.state.devices[device_id] = record
+        self._json(200, {"ok": True, "device_id": device_id})
 
     # -- activity -------------------------------------------------------------
     def _handle_activity(self) -> None:

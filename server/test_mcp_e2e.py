@@ -29,6 +29,8 @@ EXPECTED_TOOLS = {
     "get_phone_activity",
     "get_phone_screen",
     "summon_phone_ai",
+    "get_devices_activity",
+    "get_device_activity",
     "get_desktop_activity",
 }
 
@@ -70,14 +72,32 @@ async def run_mcp_e2e() -> tuple[bool, dict | None]:
             if missing:
                 print(f"    FAIL  : missing tools: {missing}")
                 return False, None
-            print("    PASS  : all 5 tools present")
+            print(f"    PASS  : all {len(EXPECTED_TOOLS)} tools present")
             print()
             for t in tools_result.tools:
                 print(f"    [{t.name}] {(t.description or '')[:80]}")
             print()
 
-            # 3. tools/call get_desktop_activity
-            print("[3] tools/call get_desktop_activity ...")
+            # 3. tools/call get_devices_activity
+            print("[3] tools/call get_devices_activity ...")
+            call_devices = await session.call_tool("get_devices_activity", arguments={})
+            raw_devices = None
+            for item in (call_devices.content or []):
+                if hasattr(item, "text"):
+                    try:
+                        raw_devices = json.loads(item.text)
+                    except Exception:
+                        raw_devices = item.text
+                    break
+            print(f"    devices response: {raw_devices}")
+            if not isinstance(raw_devices, dict) or not raw_devices.get("ok"):
+                print(f"    FAIL: get_devices_activity failed: {raw_devices}")
+                return False, None
+            print(f"    PASS  : devices count = {raw_devices.get('count', 0)}")
+            print()
+
+            # 4. tools/call get_desktop_activity (compat alias)
+            print("[4] tools/call get_desktop_activity ...")
             call_result = await session.call_tool("get_desktop_activity", arguments={})
             raw = None
             for item in (call_result.content or []):
@@ -97,14 +117,33 @@ async def run_mcp_e2e() -> tuple[bool, dict | None]:
 
             assert raw.get("ok") is True
             assert raw.get("tool") == "get_desktop_activity"
-            assert raw.get("device") == "desktop"
+            assert raw.get("device_id") == "desktop-pc"
             assert isinstance(raw.get("idle_seconds"), (int, float))
             assert raw.get("idle_seconds", -1) >= 0
             assert isinstance(raw.get("recent_activity"), list)
+            print(f"    device_id      : {raw['device_id']}")
+            print(f"    online         : {raw.get('online')}")
             print(f"    idle_seconds   : {raw['idle_seconds']}")
             print(f"    foreground     : {raw.get('foreground')}")
             print(f"    recent_activity: {len(raw['recent_activity'])} entries")
             print("    PASS")
+            print()
+
+            # 5. tools/call get_device_activity (desktop-pc)
+            print("[5] tools/call get_device_activity (desktop-pc) ...")
+            call_single = await session.call_tool("get_device_activity", arguments={"device_id": "desktop-pc"})
+            raw_single = None
+            for item in (call_single.content or []):
+                if hasattr(item, "text"):
+                    try:
+                        raw_single = json.loads(item.text)
+                    except Exception:
+                        raw_single = item.text
+                    break
+            if not isinstance(raw_single, dict) or not raw_single.get("ok"):
+                print(f"    FAIL: get_device_activity failed: {raw_single}")
+                return False, None
+            print(f"    PASS  : device {raw_single.get('device_id')} online={raw_single.get('online')}")
 
             return True, raw
 

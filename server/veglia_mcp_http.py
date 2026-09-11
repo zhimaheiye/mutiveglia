@@ -70,12 +70,6 @@ def create_app():
 
 
 def main() -> None:
-    if sys.platform == "win32":
-        import atexit
-        from desktop_collector import collector as _desktop_collector
-        _desktop_collector.start()
-        atexit.register(_desktop_collector.stop)
-
     app = create_app()
     print("=" * 52)
     print(f"  Veglia Streamable HTTP MCP Server")
@@ -89,12 +83,7 @@ def main() -> None:
         log_level="info",
     )
     server = uvicorn.Server(config)
-    try:
-        server.run()
-    finally:
-        if sys.platform == "win32":
-            from desktop_collector import collector as _desktop_collector
-            _desktop_collector.stop()
+    server.run()
 
 
 if __name__ == "__main__":

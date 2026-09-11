@@ -19,8 +19,11 @@ mcp = MCPServer(
     instructions=(
         "Tools for perceiving the owner's context through Veglia. "
         "Provides Android companion phone state (foreground apps, on-demand screenshots) "
-        "and this local Windows desktop state (active window, process, title, user idle time). "
-        "Prefer get_phone_activity or get_desktop_activity for lightweight awareness. "
+        "and Windows computers state across devices in the Veglia Device Hub "
+        "(active window, process, title, user idle time). "
+        "Use get_devices_activity to list all connected computers and get_device_activity(device_id) "
+        "to inspect a specific computer. "
+        "Prefer get_phone_activity, get_devices_activity or get_desktop_activity for lightweight awareness. "
         "Only use summon_phone_ai when the user explicitly requests it "
         "or an established automation policy authorizes it."
     )
@@ -67,29 +70,43 @@ def summon_phone_ai() -> dict:
 
 
 @mcp.tool(
+    name="get_devices_activity",
+    description=(
+        "Read activity status across all connected Windows computers in the Veglia Device Hub. "
+        "Returns a list of known devices with online status, foreground process, window title, and idle seconds. "
+        "Use this to see which computer the owner is using or check overall workspace activity."
+    )
+)
+def get_devices_activity() -> dict:
+    """Read summary activity for all registered devices."""
+    return veglia_tools.get_devices_activity_result()
+
+
+@mcp.tool(
+    name="get_device_activity",
+    description=(
+        "Read detailed desktop activity for a specific computer by its device_id (e.g., 'desktop-pc', 'main-pc'). "
+        "Returns foreground process, window title, user idle time in seconds, and recent window switch history. "
+        "Also reports whether the device is currently online (reported within 10s) and elapsed time since last report."
+    )
+)
+def get_device_activity(device_id: str) -> dict:
+    """Read detailed activity and switch history for a specific device."""
+    return veglia_tools.get_device_activity_result(device_id)
+
+
+@mcp.tool(
     name="get_desktop_activity",
     description=(
-        "Read current Windows desktop state: foreground process name, window title, "
-        "user idle time in seconds (keyboard/mouse inactivity), and recent window-switch history. "
-        "Use this to understand what the owner is currently doing on their computer. "
-        "Returns ok=false on non-Windows platforms."
+        "Read current Windows desktop state for the default/local desktop PC: "
+        "foreground process name, window title, user idle time in seconds, and recent window-switch history. "
+        "Backwards-compatibility tool querying the central Device Hub for the primary desktop."
     )
 )
 def get_desktop_activity() -> dict:
-    """Return desktop foreground app, idle seconds, and recent window switch history."""
+    """Return default desktop PC foreground app, idle seconds, and recent window switch history."""
     return veglia_tools.get_desktop_activity_result()
 
 
 if __name__ == "__main__":
-    # Desktop collector lifecycle:
-    # MCPServer (mcp SDK v2) has no on_startup/on_shutdown hooks.
-    # We start the collector explicitly here, and register stop via atexit.
-    # This runs only when the MCP server is launched as a process (not on import).
-    import atexit
-
-    if sys.platform == "win32":
-        from desktop_collector import collector as _desktop_collector
-        _desktop_collector.start()
-        atexit.register(_desktop_collector.stop)
-
     mcp.run(transport="stdio")

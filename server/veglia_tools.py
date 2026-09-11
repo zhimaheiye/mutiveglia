@@ -15,6 +15,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 HERE = Path(__file__).resolve().parent
 
@@ -53,6 +54,7 @@ def load_dotenv(path: Path) -> None:
 load_dotenv(HERE / ".env")
 TOKEN = os.environ.get("VEGLIA_TOKEN", "").strip()
 BASE_URL = os.environ.get("VEGLIA_URL", "http://127.0.0.1:8513").rstrip("/")
+DEVICE_ID = os.environ.get("VEGLIA_DEVICE_ID", "desktop-pc").strip()
 DATA_DIR = Path(os.environ.get("VEGLIA_DATA_DIR", str(HERE / "data"))).resolve()
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 
@@ -243,29 +245,78 @@ def summon_phone_ai_result() -> dict[str, Any]:
         }
 
 
-def get_desktop_activity_result() -> dict[str, Any]:
-    """
-    Return Windows desktop state snapshot for MCP consumption.
-
-    Delegates to desktop_collector.collector.snapshot().
-    The collector must have been started before calling this
-    (done in veglia_mcp.py __main__).
-    """
-    if sys.platform != "win32":
-        return {
-            "ok": False,
-            "tool": "get_desktop_activity",
-            "error": "desktop collector is Windows-only",
-        }
+def get_devices_activity_result() -> dict[str, Any]:
+    req = urllib.request.Request(
+        f"{BASE_URL}/devices",
+        headers={"X-Auth-Token": TOKEN} if TOKEN else {},
+        method="GET",
+    )
     try:
-        from desktop_collector import collector  # local import — no startup side effect
-        return collector.snapshot()
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            devs = data.get("devices", [])
+            return {
+                "ok": True,
+                "tool": "get_devices_activity",
+                "devices": devs,
+                "count": len(devs),
+            }
     except Exception as e:
         return {
             "ok": False,
-            "tool": "get_desktop_activity",
+            "tool": "get_devices_activity",
             "error": str(e),
+            "devices": [],
+            "count": 0,
         }
+
+
+def get_device_activity_result(device_id: str) -> dict[str, Any]:
+    if not device_id:
+        return {
+            "ok": False,
+            "tool": "get_device_activity",
+            "error": "missing_device_id",
+        }
+    req = urllib.request.Request(
+        f"{BASE_URL}/devices/{quote(device_id, safe='')}",
+        headers={"X-Auth-Token": TOKEN} if TOKEN else {},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            data["tool"] = "get_device_activity"
+            return data
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8"))
+            body["tool"] = "get_device_activity"
+            return body
+        except Exception:
+            return {
+                "ok": False,
+                "tool": "get_device_activity",
+                "error": f"HTTP {e.code}: {e.reason}",
+                "device_id": device_id,
+            }
+    except Exception as e:
+        return {
+            "ok": False,
+            "tool": "get_device_activity",
+            "error": str(e),
+            "device_id": device_id,
+        }
+
+
+def get_desktop_activity_result() -> dict[str, Any]:
+    """
+    Backwards-compatibility alias for the default desktop device.
+    Queries the central Device Hub for the local/default device_id.
+    """
+    res = get_device_activity_result(DEVICE_ID)
+    res["tool"] = "get_desktop_activity"
+    return res
 
 
 def tool_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -312,10 +363,18 @@ def main() -> None:
     p_summon = subparsers.add_parser("summon", help="Bring target AI app to the foreground")
     p_summon.set_defaults(func=tool_summon)
 
-    # desktop (Windows only)
-    if sys.platform == "win32":
-        p_desktop = subparsers.add_parser("desktop", help="Get current Windows desktop activity state")
-        p_desktop.set_defaults(func=lambda args: get_desktop_activity_result())
+    # devices
+    p_devices = subparsers.add_parser("devices", help="Get activity summary across all connected devices")
+    p_devices.set_defaults(func=lambda args: get_devices_activity_result())
+
+    # device
+    p_device = subparsers.add_parser("device", help="Get detailed activity for a specific device")
+    p_device.add_argument("device_id", nargs="?", default=DEVICE_ID, help="Target device ID (default: local DEVICE_ID)")
+    p_device.set_defaults(func=lambda args: get_device_activity_result(args.device_id))
+
+    # desktop (backwards compatibility alias)
+    p_desktop = subparsers.add_parser("desktop", help="Get current desktop activity state (compat alias)")
+    p_desktop.set_defaults(func=lambda args: get_desktop_activity_result())
 
     args = parser.parse_args()
     res = args.func(args)
