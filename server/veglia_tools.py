@@ -319,6 +319,39 @@ def get_desktop_activity_result() -> dict[str, Any]:
     return res
 
 
+def get_context_result() -> dict[str, Any]:
+    """
+    Query the central Device Hub for a fused multi-device context snapshot.
+    """
+    req = urllib.request.Request(
+        f"{BASE_URL}/context",
+        headers={"X-Auth-Token": TOKEN} if TOKEN else {},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            data["tool"] = "get_context"
+            return data
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8"))
+            body["tool"] = "get_context"
+            return body
+        except Exception:
+            return {
+                "ok": False,
+                "tool": "get_context",
+                "error": f"HTTP {e.code}: {e.reason}",
+            }
+    except Exception as e:
+        return {
+            "ok": False,
+            "tool": "get_context",
+            "error": str(e),
+        }
+
+
 def tool_status(args: argparse.Namespace) -> dict[str, Any]:
     return get_veglia_status_result()
 
@@ -375,6 +408,10 @@ def main() -> None:
     # desktop (backwards compatibility alias)
     p_desktop = subparsers.add_parser("desktop", help="Get current desktop activity state (compat alias)")
     p_desktop.set_defaults(func=lambda args: get_desktop_activity_result())
+
+    # context (fused multi-device state)
+    p_context = subparsers.add_parser("context", help="Get fused multi-device context snapshot")
+    p_context.set_defaults(func=lambda args: get_context_result())
 
     args = parser.parse_args()
     res = args.func(args)
