@@ -1,22 +1,26 @@
 # Veglia MCP Server (stdio)
 
-Veglia 官方 Model Context Protocol (MCP) 本地服务层，基于 MCP Python SDK v2 (`mcp.server.mcpserver.MCPServer`) 构建。
+Veglia 官方 Model Context Protocol (MCP) 服务层，基于 MCP Python SDK v2 (`mcp.server.mcpserver.MCPServer`) 构建。
 
-通过标准输入/输出 (stdio) 为各类 AI Agent 提供原生工具支持，使 Agent 能够无缝感知宿主手机运行状态，并在需要时直接接收屏幕截图（原生 ImageContent 类型）。
+为各类 AI Agent 提供原生工具支持：感知 Android 手机状态、跨 **任意数量** Windows 电脑的设备活动（Device Hub）、按需接收屏幕截图（原生 ImageContent 类型），以及融合后的多设备上下文快照。
 
 ## 架构
 
 ```text
-Android Companion (Veglia App)
-       ↓ (局域网 HTTP / Header X-Auth-Token)
-veglia_server.py (Windows 本地服务 :8513)
-       ↓ (本地 HTTP 请求)
+Windows Sensors (每台电脑运行 device_sensor.py, .env 配置 VEGLIA_DEVICE_ID)
+       ↓  POST /devices/report (Header X-Auth-Token)
+Central Device Hub :8513  (veglia_server.py, 同时桥接 Android 手机)
+       ↓  GET /devices · /devices/{device_id} · /context
 veglia_tools.py (底层业务逻辑与数据模型)
-       ↓ (函数引用)
-veglia_mcp.py (MCP SDK v2 stdio 服务端)
-       ↓ (stdio JSON-RPC)
+       ↓  函数引用
+veglia_mcp.py (stdio) / veglia_mcp_http.py (HTTP)
+       ↓  JSON-RPC MCP
 AI Agent (Antigravity / Codex / Claude Desktop / Cursor 等)
 ```
+
+Device Hub 是 **N-device 泛化架构**：Registry 按任意唯一 `device_id` 动态注册（`self.devices[device_id] = record`），不限制设备数量，不依赖固定设备清单。新增一台 Windows 电脑只需在新机器上运行 `device_sensor.py` 并配置独立的 `VEGLIA_DEVICE_ID` / `VEGLIA_DEVICE_NAME`，无需改动服务端代码。
+
+Context Fusion（`context_fusion.py`，规格版本 `context-v1`）遍历全部 Windows device records 与手机状态统一 normalize，输出 `active_devices` / `primary_device` / `simultaneous_usage` / `ambiguous` 等确定性结论。
 
 ## Agent 配置接入示例
 
@@ -39,8 +43,11 @@ AI Agent (Antigravity / Codex / Claude Desktop / Cursor 等)
 注意：
 - 鉴权令牌 `VEGLIA_TOKEN` 由 `veglia_tools.py` 自动从本地 `server/.env` 文件加载，无需在 MCP 配置中明文暴露。
 - 服务工作目录必须指定为 `server/` 所在目录，以保证正确加载 `.env` 及数据目录。
+- HTTP 传输变体 `veglia_mcp_http.py` 复用同一套工具注册，供远程 Agent 接入。
 
-## 注册工具说明
+## 注册工具说明（共 8 个）
+
+### 手机侧
 
 1. `get_veglia_status`:
    - 检查手机桥接服务状态与截图目录状态；
@@ -55,6 +62,25 @@ AI Agent (Antigravity / Codex / Claude Desktop / Cursor 等)
 4. `summon_phone_ai`:
    - 拉起手机端伴侣 AI 应用；
    - 具有明显前台打断性，仅在明确指令下调用。
-5. `get_desktop_activity`:
-   - 读取当前 Windows 桌面状态：前台应用进程名、窗口标题、PID、键鼠空闲时间（`idle_seconds`）以及最近的窗口切换历史；
-   - 本地轻量只读工具，低延迟感知用户在台式机上的当前工作上下文。
+
+### Windows 设备侧（Device Hub）
+
+5. `get_devices_activity`:
+   - 读取 Device Hub 中 **所有已注册 Windows 设备** 的活动概要；
+   - 支持 **任意数量** 已注册设备，无需预先知道 device_id；
+   - 返回各设备的 online 状态、前台进程、窗口标题、idle 秒数。
+6. `get_device_activity(device_id)`:
+   - 按 device_id 读取任意一台已注册 Windows 电脑的详细活动；
+   - 不清楚有哪些设备时，先用 `get_devices_activity` 获取可用 ID；
+   - 返回前台进程、窗口标题、idle 秒数与最近窗口切换历史。
+7. `get_desktop_activity`:
+   - **向后兼容 alias**：查询当前 MCP 宿主 `.env` 中 `VEGLIA_DEVICE_ID` 指向的本机设备；
+   - 每台电脑上的本地 MCP 各自返回自己的状态（如台式机返回 `desktop-pc`，主力机返回 `main-pc`）；
+   - 不固定指向某台特定机器。
+
+### 融合上下文
+
+8. `get_context`:
+   - 返回确定性融合的多设备上下文快照（`context-v1`）；
+   - 包含 `active_devices`、`primary_device`（含置信度）、`simultaneous_usage`、`ambiguous` 与逐设备 normalized 状态；
+   - 关心"当前整体上下文"时，优先调用本工具而非逐台对比各设备。

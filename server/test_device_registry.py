@@ -196,5 +196,89 @@ class DeviceRegistryTestCase(unittest.TestCase):
         self.assertIn("SINGLE_ACTIVE_DEVICE", body.get("reason_codes", []))
 
 
+    def test_three_devices_report_and_independent_update(self):
+        """N-device generalization: desktop-pc / main-pc / lenovo-touch all
+        register independently; updating one never touches the others."""
+        reports = [
+            {
+                "device_id": "desktop-pc",
+                "device_name": "台式机",
+                "device_type": "windows_pc",
+                "foreground": {"process_name": "code.exe", "window_title": "Editor"},
+                "idle_seconds": 5,
+                "recent_activity": [],
+            },
+            {
+                "device_id": "main-pc",
+                "device_name": "主力机",
+                "device_type": "windows_pc",
+                "foreground": {"process_name": "msedge.exe", "window_title": "Browser"},
+                "idle_seconds": 10,
+                "recent_activity": [],
+            },
+            {
+                "device_id": "lenovo-touch",
+                "device_name": "联想触屏笔记本",
+                "device_type": "windows_pc",
+                "foreground": {"process_name": "obsidian.exe", "window_title": "Notes"},
+                "idle_seconds": 2,
+                "recent_activity": [],
+            },
+        ]
+        for payload in reports:
+            status, body = self._request("POST", "/devices/report", payload, token=self.token)
+            self.assertEqual(status, 200)
+            self.assertTrue(body.get("ok"))
+
+        # All three present in GET /devices — no count cap, no overwrite
+        status, body = self._request("GET", "/devices", token=self.token)
+        self.assertEqual(status, 200)
+        devices = body.get("devices", [])
+        self.assertEqual(len(devices), 3)
+        dev_map = {d["device_id"]: d for d in devices}
+        self.assertEqual(set(dev_map.keys()), {"desktop-pc", "main-pc", "lenovo-touch"})
+        self.assertEqual(dev_map["desktop-pc"]["device_name"], "台式机")
+        self.assertEqual(dev_map["main-pc"]["device_name"], "主力机")
+        self.assertEqual(dev_map["lenovo-touch"]["device_name"], "联想触屏笔记本")
+        self.assertTrue(dev_map["lenovo-touch"]["online"])
+
+        # Each detail endpoint exists independently
+        for device_id, proc in (
+            ("desktop-pc", "code.exe"),
+            ("main-pc", "msedge.exe"),
+            ("lenovo-touch", "obsidian.exe"),
+        ):
+            status, detail = self._request("GET", f"/devices/{device_id}", token=self.token)
+            self.assertEqual(status, 200)
+            self.assertTrue(detail.get("ok"))
+            self.assertEqual(detail["foreground"]["process_name"], proc)
+
+        # Independently update lenovo-touch only
+        update_payload = {
+            "device_id": "lenovo-touch",
+            "device_name": "联想触屏笔记本",
+            "device_type": "windows_pc",
+            "foreground": {"process_name": "chrome.exe", "window_title": "Docs"},
+            "idle_seconds": 0,
+            "recent_activity": [],
+        }
+        status, body = self._request("POST", "/devices/report", update_payload, token=self.token)
+        self.assertEqual(status, 200)
+
+        # The other two devices must be unchanged
+        status, detail = self._request("GET", "/devices/desktop-pc", token=self.token)
+        self.assertEqual(detail["foreground"]["process_name"], "code.exe")
+        self.assertEqual(detail["idle_seconds"], 5)
+        status, detail = self._request("GET", "/devices/main-pc", token=self.token)
+        self.assertEqual(detail["foreground"]["process_name"], "msedge.exe")
+        self.assertEqual(detail["idle_seconds"], 10)
+        # lenovo-touch carries the new state, registry still has exactly 3
+        status, detail = self._request("GET", "/devices/lenovo-touch", token=self.token)
+        self.assertEqual(detail["foreground"]["process_name"], "chrome.exe")
+        self.assertEqual(detail["idle_seconds"], 0)
+        status, body = self._request("GET", "/devices", token=self.token)
+        self.assertEqual(len(body.get("devices", [])), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
