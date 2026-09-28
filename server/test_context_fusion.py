@@ -261,5 +261,168 @@ class ContextFusionTestCase(unittest.TestCase):
         self.assertTrue(res3["ok"])
 
 
+class NDeviceContextFusionTestCase(unittest.TestCase):
+    """3-PC / N-device generalization cases.
+
+    Purpose: prove that fusion generalizes to >=3 Windows devices (and beyond,
+    via a 4th 'test-pc-4'). These tests do NOT hardcode "device count == 3";
+    they assert that every registered device participates in fusion with no
+    truncation and no per-device coupling.
+    """
+
+    def setUp(self):
+        self.fixed_now_ms = 1789136000000
+
+    def _phone_off(self) -> dict:
+        return {
+            "current": {
+                "screenInteractive": False,
+                "lastHeartbeatTs": self.fixed_now_ms - 20000,
+            }
+        }
+
+    def _three_pcs(self, desktop_idle=100, main_idle=100, lenovo_idle=100,
+                   lenovo_age=1.0) -> list[dict]:
+        return [
+            {
+                "device_id": "desktop-pc",
+                "device_name": "台式机",
+                "device_type": "windows_pc",
+                "online": True,
+                "age_seconds": 1.0,
+                "idle_seconds": desktop_idle,
+            },
+            {
+                "device_id": "main-pc",
+                "device_name": "主力机",
+                "device_type": "windows_pc",
+                "online": True,
+                "age_seconds": 1.0,
+                "idle_seconds": main_idle,
+            },
+            {
+                "device_id": "lenovo-touch",
+                "device_name": "联想触屏笔记本",
+                "device_type": "windows_pc",
+                "online": True,
+                "age_seconds": lenovo_age,
+                "idle_seconds": lenovo_idle,
+            },
+        ]
+
+    # --- Case A -----------------------------------------------------------
+    def test_case_a_lenovo_only_active(self):
+        """desktop/main inactive, lenovo-touch active, phone off -> lenovo is primary."""
+        res = fuse_context(
+            self._phone_off(),
+            self._three_pcs(desktop_idle=100, main_idle=200, lenovo_idle=3),
+            now_ms=self.fixed_now_ms,
+        )
+        self.assertEqual(res["active_devices"], ["lenovo-touch"])
+        self.assertEqual(res["primary_device"], "lenovo-touch")
+        self.assertFalse(res["simultaneous_usage"])
+        self.assertFalse(res["ambiguous"])
+        dev_map = {d["device_id"]: d for d in res["devices"]}
+        self.assertEqual(dev_map["lenovo-touch"]["activity_state"], "active")
+        self.assertEqual(dev_map["desktop-pc"]["activity_state"], "idle")
+        self.assertEqual(dev_map["main-pc"]["activity_state"], "inactive")
+
+    # --- Case B -----------------------------------------------------------
+    def test_case_b_main_and_lenovo_simultaneous(self):
+        """main-pc + lenovo-touch both active with equal scores -> simultaneous + ambiguous."""
+        devices = self._three_pcs(desktop_idle=120, main_idle=2, lenovo_idle=2)
+        res = fuse_context(self._phone_off(), devices, now_ms=self.fixed_now_ms)
+        self.assertEqual(set(res["active_devices"]), {"main-pc", "lenovo-touch"})
+        self.assertTrue(res["simultaneous_usage"])
+        self.assertTrue(res["ambiguous"])
+        self.assertIsNone(res["primary_device"])
+        self.assertEqual(res["primary_device_confidence"], 0.0)
+        self.assertIn("SIMULTANEOUS_USAGE_DETECTED", res["reason_codes"])
+
+    # --- Case C -----------------------------------------------------------
+    def test_case_c_three_pcs_all_active_no_truncation(self):
+        """All three Windows PCs active -> active_devices contains all three."""
+        devices = self._three_pcs(desktop_idle=1, main_idle=1, lenovo_idle=1)
+        res = fuse_context(self._phone_off(), devices, now_ms=self.fixed_now_ms)
+        self.assertEqual(len(res["active_devices"]), 3)
+        self.assertEqual(
+            set(res["active_devices"]),
+            {"desktop-pc", "main-pc", "lenovo-touch"},
+        )
+        self.assertTrue(res["simultaneous_usage"])
+        # All scores equal -> ambiguous, primary None
+        self.assertTrue(res["ambiguous"])
+        self.assertIsNone(res["primary_device"])
+        # Fusion output must include all three devices (plus phone)
+        self.assertEqual(len(res["devices"]), 4)
+
+    def test_case_c_beyond_three_pcs_no_upper_bound(self):
+        """A 4th Windows device (test-pc-4) also participates -> no 3-PC cap."""
+        devices = self._three_pcs(desktop_idle=1, main_idle=1, lenovo_idle=1)
+        devices.append({
+            "device_id": "test-pc-4",
+            "device_name": "测试机四号",
+            "device_type": "windows_pc",
+            "online": True,
+            "age_seconds": 1.0,
+            "idle_seconds": 1,
+        })
+        res = fuse_context(self._phone_off(), devices, now_ms=self.fixed_now_ms)
+        self.assertEqual(len(res["active_devices"]), 4)
+        self.assertEqual(
+            set(res["active_devices"]),
+            {"desktop-pc", "main-pc", "lenovo-touch", "test-pc-4"},
+        )
+        self.assertEqual(len(res["devices"]), 5)  # 4 PCs + phone
+
+    def test_case_c_four_pcs_single_clear_primary(self):
+        """4 PCs, only test-pc-4 active -> primary is test-pc-4 (generalization)."""
+        devices = self._three_pcs(desktop_idle=100, main_idle=200, lenovo_idle=300)
+        devices.append({
+            "device_id": "test-pc-4",
+            "device_name": "测试机四号",
+            "device_type": "windows_pc",
+            "online": True,
+            "age_seconds": 1.0,
+            "idle_seconds": 4,
+        })
+        res = fuse_context(self._phone_off(), devices, now_ms=self.fixed_now_ms)
+        self.assertEqual(res["active_devices"], ["test-pc-4"])
+        self.assertEqual(res["primary_device"], "test-pc-4")
+        self.assertFalse(res["simultaneous_usage"])
+        self.assertFalse(res["ambiguous"])
+
+    # --- Case D -----------------------------------------------------------
+    def test_case_d_stale_lenovo_does_not_block_main(self):
+        """lenovo-touch stale (age > 10s) must be offline and not affect main-pc primary."""
+        devices = self._three_pcs(desktop_idle=150, main_idle=2, lenovo_idle=0,
+                                  lenovo_age=30.0)
+        res = fuse_context(self._phone_off(), devices, now_ms=self.fixed_now_ms)
+        dev_map = {d["device_id"]: d for d in res["devices"]}
+        self.assertEqual(dev_map["lenovo-touch"]["activity_state"], "offline")
+        self.assertEqual(dev_map["lenovo-touch"]["activity_score"], 0.0)
+        self.assertIn("DEVICE_STALE", dev_map["lenovo-touch"]["signals"])
+        self.assertEqual(res["active_devices"], ["main-pc"])
+        self.assertEqual(res["primary_device"], "main-pc")
+        self.assertFalse(res["ambiguous"])
+
+    # --- Case E -----------------------------------------------------------
+    def test_case_e_only_lenovo_online(self):
+        """Only lenovo-touch online (others offline) -> fusion still works normally."""
+        devices = self._three_pcs(desktop_idle=100, main_idle=100, lenovo_idle=2)
+        devices[0]["online"] = False
+        devices[0]["age_seconds"] = 45.0
+        devices[1]["online"] = False
+        devices[1]["age_seconds"] = 60.0
+        res = fuse_context(self._phone_off(), devices, now_ms=self.fixed_now_ms)
+        dev_map = {d["device_id"]: d for d in res["devices"]}
+        self.assertFalse(dev_map["desktop-pc"]["online"])
+        self.assertFalse(dev_map["main-pc"]["online"])
+        self.assertTrue(dev_map["lenovo-touch"]["online"])
+        self.assertEqual(res["active_devices"], ["lenovo-touch"])
+        self.assertEqual(res["primary_device"], "lenovo-touch")
+        self.assertTrue(res["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

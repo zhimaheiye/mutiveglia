@@ -84,7 +84,8 @@ def get_devices_activity() -> dict:
 @mcp.tool(
     name="get_device_activity",
     description=(
-        "Read detailed desktop activity for a specific computer by its device_id (e.g., 'desktop-pc', 'main-pc'). "
+        "Read detailed activity for any registered Windows computer by its device_id. "
+        "Use get_devices_activity first if available device IDs are unknown. "
         "Returns foreground process, window title, user idle time in seconds, and recent window switch history. "
         "Also reports whether the device is currently online (reported within 10s) and elapsed time since last report."
     )
