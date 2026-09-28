@@ -15,7 +15,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 HERE = Path(__file__).resolve().parent
 
@@ -58,6 +58,30 @@ DEVICE_ID = os.environ.get("VEGLIA_DEVICE_ID", "desktop-pc").strip()
 DATA_DIR = Path(os.environ.get("VEGLIA_DATA_DIR", str(HERE / "data"))).resolve()
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 
+# Loopback requests to Veglia Core must never go through an HTTP(S) proxy:
+# urllib's default opener reads proxy env vars (HTTP_PROXY etc.), and a
+# stale/dead proxy port breaks local Core access with WinError 10061.
+_PROXY_BYPASS_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_NO_PROXY_OPENER: Optional[urllib.request.OpenerDirector] = None
+
+
+def _urlopen_core(req: urllib.request.Request, timeout: float):
+    """Open a request to the Veglia Core.
+
+    When BASE_URL points at loopback (127.0.0.1 / localhost / ::1), force a
+    direct no-proxy opener so HTTP(S)_PROXY / ALL_PROXY env vars can never
+    break local Core access. Non-loopback BASE_URLs keep the default urllib
+    proxy behavior unchanged.
+    """
+    global _NO_PROXY_OPENER
+    if _NO_PROXY_OPENER is None:
+        _NO_PROXY_OPENER = urllib.request.build_opener(
+            urllib.request.ProxyHandler({})
+        )
+    if urlparse(BASE_URL).hostname in _PROXY_BYPASS_HOSTS:
+        return _NO_PROXY_OPENER.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
 
 def format_ago(ts_ms: int) -> str:
     s = int(time.time() - ts_ms / 1000)
@@ -88,7 +112,7 @@ def get_veglia_status_result() -> dict[str, Any]:
 
     req = urllib.request.Request(f"{BASE_URL}/health", method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with _urlopen_core(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             reachable = True
             service_name = data.get("service", "veglia")
@@ -128,7 +152,7 @@ def get_phone_activity_result() -> dict[str, Any]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_core(req, timeout=5) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
             raw_events = payload.get("events", [])
             raw_current = payload.get("current")
@@ -188,7 +212,7 @@ def get_phone_screen_result(timeout: float = 10.0) -> dict[str, Any]:
         data=b"",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_core(req, timeout=5) as resp:
             pass
     except Exception as e:
         return {
@@ -231,7 +255,7 @@ def summon_phone_ai_result() -> dict[str, Any]:
         data=b"",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_core(req, timeout=5) as resp:
             return {
                 "ok": True,
                 "tool": "summon_phone_ai",
@@ -252,7 +276,7 @@ def get_devices_activity_result() -> dict[str, Any]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_core(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             devs = data.get("devices", [])
             return {
@@ -284,7 +308,7 @@ def get_device_activity_result(device_id: str) -> dict[str, Any]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_core(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             data["tool"] = "get_device_activity"
             return data
@@ -329,7 +353,7 @@ def get_context_result() -> dict[str, Any]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_core(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             data["tool"] = "get_context"
             return data
