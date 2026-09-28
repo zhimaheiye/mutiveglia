@@ -7,6 +7,7 @@ periodically to the central Veglia Core Server (:8513).
 from __future__ import annotations
 
 import atexit
+import ipaddress
 import json
 import logging
 import os
@@ -16,7 +17,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -67,6 +69,61 @@ HTTP_TIMEOUT = 3.0
 from desktop_collector import collector
 
 
+# --- Hub proxy policy ------------------------------------------------------
+# The Hub is (almost) always local or on the LAN. Proxies must never be used
+# for those: urllib's default opener picks up HTTP(S)_PROXY / ALL_PROXY and
+# the Windows system proxy, and caches them in its global opener. A stale
+# proxy then breaks Hub reporting with WinError 10061 even though the Hub
+# itself is healthy. Public/non-private Hub URLs keep default behavior.
+_DIRECT_HUB_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+_LOOPBACK_V6 = ipaddress.ip_address("::1")
+_NO_PROXY_OPENER: Optional[urllib.request.OpenerDirector] = None
+
+
+def _is_direct_hub_host(hostname: Optional[str]) -> bool:
+    """True for local/LAN Hub hosts that must always be reached DIRECT.
+
+    Covers: localhost, ::1, 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12,
+    192.168.0.0/16. Anything else (public IP / remote hostname) is False.
+    Deliberately not using ipaddress.is_private: that would also cover
+    ranges outside the intended local/LAN policy.
+    """
+    if not hostname:
+        return False
+    host = hostname.strip().strip("[]").lower()
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if addr.version == 6:
+        return addr == _LOOPBACK_V6
+    return any(addr in net for net in _DIRECT_HUB_NETWORKS)
+
+
+def _urlopen_hub(req: urllib.request.Request, timeout: float = HTTP_TIMEOUT):
+    """Open a request against the Veglia Hub.
+
+    Local/LAN Hub hosts are opened with an explicit no-proxy opener, fully
+    bypassing proxy env vars, the Windows system proxy, and any stale proxy
+    cached in urllib's global opener. Other hosts use default urllib behavior.
+    """
+    global _NO_PROXY_OPENER
+    if _NO_PROXY_OPENER is None:
+        _NO_PROXY_OPENER = urllib.request.build_opener(
+            urllib.request.ProxyHandler({})
+        )
+    if _is_direct_hub_host(urlparse(req.full_url).hostname):
+        return _NO_PROXY_OPENER.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 class DeviceSensor:
     def __init__(
         self,
@@ -112,7 +169,7 @@ class DeviceSensor:
 
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            with _urlopen_hub(req) as resp:
                 if resp.status == 200:
                     if self._had_error:
                         logger.info(f"Hub connection restored ({url})")
