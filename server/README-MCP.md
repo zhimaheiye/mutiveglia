@@ -84,3 +84,34 @@ Context Fusion（`context_fusion.py`，规格版本 `context-v1`）遍历全部 
    - 返回确定性融合的多设备上下文快照（`context-v1`）；
    - 包含 `active_devices`、`primary_device`（含置信度）、`simultaneous_usage`、`ambiguous` 与逐设备 normalized 状态；
    - 关心"当前整体上下文"时，优先调用本工具而非逐台对比各设备。
+
+## 远程接入：cloudflared 临时隧道（本机现场记录）
+
+> 证据边界：以下为 2026-09-16 单机现场验证记录，不是本仓库的正式部署推荐；正式 / 长期部署仍应使用命名隧道 + 固定域名（或 nginx/caddy TLS）。
+
+把本机 HTTP MCP（`veglia_mcp_http.py`，监听 `127.0.0.1:8514`，路径 `/mcp`）临时暴露给远程 Agent，最快路径是 cloudflared Quick Tunnel：
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8514
+```
+
+会打印一个 `https://<随机>.trycloudflare.com` 地址，远程 Agent 以 `https://<随机>.trycloudflare.com/mcp` 接入。本机现场约定：**隧道只挂 8514，不挂 8513**——8513 是 Device Hub / 手机桥接，不要一起暴露。
+
+Quick Tunnel 的已知限制：
+
+- 地址每次重启都会变，不能写成固定配置；
+- Cloudflare 官方明确 Quick Tunnel 不支持 SSE，对依赖 SSE 的 MCP 客户端可能不可用；
+- 仅适合临时打通验证，长期使用请改命名隧道。
+
+### 本机坑：Clash Verge TUN + fake-ip 导致隧道连不上
+
+本机现场验证：即使 Clash 里已有 `cloudflared` 的 DIRECT 规则，TUN + fake-ip 模式仍会把 `argotunnel.com`（cloudflared 边缘连接用的 7844 端口域）解析成 `198.18.x.x` 假 IP，导致隧道注册失败、连不上。
+
+解决：在 Clash Verge 配置中
+
+1. `tun.exclude-process` 加入 `cloudflared.exe`（进程级绕过 TUN）；
+2. `dns.fake-ip-filter` 加入 `+.argotunnel.com`、`+.trycloudflare.com`（域名不走 fake-ip）；
+
+然后重启 mihomo 内核生效。
+
+注意这是这台机器的现场验证结论，不要直接外推为所有 Clash / mihomo 版本的通用行为；其他机器遇到隧道连不上时，先用同样的思路核对 DNS 解析是否被 fake-ip 接管。
