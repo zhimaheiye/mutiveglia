@@ -251,7 +251,14 @@ Write-Output ('  VegliaWatchdog ' + $(if ($existingWd) { 're-registered' } else 
 
 # ---- 3. Task Scheduler audit trail
 try {
-    & wevtutil.exe sl 'Microsoft-Windows-TaskScheduler/Operational' /e:true /rd:false /ms:33408000 2>&1 | Out-Null
+    # Native stderr under $ErrorActionPreference='Stop' would raise a NativeCommandError on
+    # the first warning, so relax it just for this call.
+    $eapSave = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    # valid wevtutil sl switches are /e /q /rt /ab /ms /lfn ... (/maxs and /rd do not exist
+    # and make the whole command fail with "option rd is invalid").
+    $null = & wevtutil.exe sl 'Microsoft-Windows-TaskScheduler/Operational' /e:true /ms:20971520 2>&1
+    $ErrorActionPreference = $eapSave
     $st = (Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction SilentlyContinue).IsEnabled
     if ($st) { Write-Output '  TaskScheduler/Operational log enabled' }
     else { Write-Output '  WARN TaskScheduler/Operational still disabled - run this script elevated' }
