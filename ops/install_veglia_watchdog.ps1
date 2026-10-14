@@ -54,7 +54,9 @@ function Read-TaskXml {
     param([string]$TaskName)
     $raw = Export-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     $d = New-Object System.Xml.XmlDocument
-    $d.LoadXml($raw)
+    # LoadXml returns the root element on .NET Framework: swallow it, otherwise the function
+    # emits [XmlElement, XmlDocument] and the caller's $Doc.SelectSingleNode binding fails.
+    [void]$d.LoadXml($raw)
     return $d
 }
 
@@ -76,11 +78,13 @@ function Ensure-BootTrigger {
     $tr = $Doc.SelectSingleNode('/t:Task/t:Triggers', $m)
     if (-not $tr) { $tr = $Doc.CreateElement('Triggers', $nsUri); [void]$Doc.DocumentElement.AppendChild($tr) }
     $existing = $tr.SelectSingleNode('t:BootTrigger', $m)
-    if ($existing) { Write-Output ("  $TaskName BootTrigger already present"); return $false }
+    # [Console]::WriteLine, not Write-Output: these helpers return a boolean that the caller
+    # combines with -or, and pipeline text would turn it into an array.
+    if ($existing) { [Console]::WriteLine("  $TaskName BootTrigger already present"); return $false }
     $bt = $Doc.CreateElement('BootTrigger', $nsUri)
     $en = $Doc.CreateElement('Enabled', $nsUri); $en.InnerText = 'true'; [void]$bt.AppendChild($en)
     [void]$tr.AppendChild($bt)
-    Write-Output ("  $TaskName + BootTrigger")
+    [Console]::WriteLine("  $TaskName + BootTrigger")
     return $true
 }
 
@@ -95,7 +99,7 @@ function Disable-StopOnIdleEnd {
     }
     if ($node.InnerText -eq 'false') { return $false }
     $node.InnerText = 'false'
-    Write-Output ("  $TaskName IdleSettings/StopOnIdleEnd -> false")
+    [Console]::WriteLine("  $TaskName IdleSettings/StopOnIdleEnd -> false")
     return $true
 }
 
@@ -166,8 +170,8 @@ New-Item -ItemType Directory -Force -Path (Join-Path $DeploymentRoot 'logs') | O
 foreach ($n in $TaskNames) {
     $doc = Read-TaskXml -TaskName $n
     $changed = $false
-    $changed = (Ensure-BootTrigger -Doc $doc -TaskName $n) -or $changed
-    $changed = (Disable-StopOnIdleEnd -Doc $doc -TaskName $n) -or $changed
+    $changed = [bool](Ensure-BootTrigger -Doc $doc -TaskName $n) -or [bool]$changed
+    $changed = [bool](Disable-StopOnIdleEnd -Doc $doc -TaskName $n) -or [bool]$changed
     if ($changed) {
         [void](Register-Xml -TaskName $n -Doc $doc)
         Write-Output ("  $n re-registered")
