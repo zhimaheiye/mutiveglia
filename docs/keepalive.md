@@ -238,10 +238,15 @@ Core 恢复成功后立刻复测 MCP，使两者可以在同一轮内连续恢�
 | T6 | 连续失败 / 限频 / 冷却 / 告警去重 | 通过，3/3 `RECOVERED` → `FLAP:mcp SENT` → 第 4 次 `SKIP_RATE_LIMIT 3/3` + `LIMIT:mcp SENT` → 重复键 `DEDUPED since_last_min=0` → 恢复后 `HEALTHY_AGAIN` + `RECOVERED:mcp SENT`，告警键清空 |
 | T7 | 并发不重叠恢复 | 通过，三轮并发 1×`START` + 2×`SKIP_ALREADY_RUNNING` |
 | T8 | 本机 / 局域网 / 公网 | 通过（11:06 复核，见下） |
+| T8b | MCP 会话链路（可选） | 通过（11:2x 实测）：`initialize=200`（server `veglia-phone`，protocol `2025-03-26`，返回 session id）→ `notifications/initialized=202` → `tools/list=200` 且 8 个工具齐全 → `DELETE=200` |
 | T9 | 任务被禁用时的升级告警 | 通过，`ACTION mcp task_disabled - refusing to enable silently` + `DISABLED:mcp SENT`；重新启用后自动恢复 |
 
-> T2、T6、T9 里的 MCP 故障与禁用**都是人为注入的测试**，并通过真实 lark-cli 发出过飞书消息
-> （`FLAP:mcp`、`LIMIT:mcp`、`DISABLED:mcp`、`RECOVERED:mcp`）。不是线上事故。
+> T8b 的第一次尝试返回 400 `Parse error: key must be a string at line 1 column 2`，
+> 那是 PowerShell 把 `-d '{"a":1}'` 里的双引号吃掉导致的**客户端假故障**，不是 MCP 的问题；
+> 改用 `--data-binary '@file'` 后全链路 200。以后写探针脚本要记住这条。
+
+> T2、T3、T4、T6、T9 里被杀掉的进程与被禁用的任务**都是人为注入的测试**，并通过真实 lark-cli
+> 发出过飞书消息（`FLAP:mcp`、`LIMIT:mcp`、`DISABLED:mcp`、`RECOVERED:mcp`）。不是线上事故。
 
 **未验证 / 受限，不得当成已完成：**
 
@@ -250,9 +255,11 @@ Core 恢复成功后立刻复测 MCP，使两者可以在同一轮内连续恢�
 - 重启后 BootTrigger 的实际效果：未做重启实测（会中断在用服务），只验证了任务定义里触发器已存在。
 - T6 期间为了重置测试计数删除过 `watchdog-state.json`（测试动作，会清掉当时已累计的限频历史）。
 
-收尾复核（2026-10-14 11:06 实测）：`127.0.0.1:8513`、`127.0.0.1:8514`、`192.168.101.84:8513`、
+收尾复核（2026-10-14 11:06 实测，11:26 再次复测）：`127.0.0.1:8513`、`127.0.0.1:8514`、`192.168.101.84:8513`、
 `192.168.101.84:8514`、`https://mcp.zhimaheiye.dpdns.org/health` 全部 200；无 `maintenance.flag`；
 状态文件告警键为空；Core 与 MCP 各只有一组进程且父进程为任务调度器，无测试残留进程；
+11:06 / 11:11 / 11:16 / 11:21 / 11:26 连续五轮 `ROUND END core=200/ok mcp=200/ok`，
+`LastTaskResult=0`，其间没有任何 `ACTION` 或 `ALERT` 行——健康状态下确实不打扰人。
 `VegliaWatchdog` `LastTaskResult=0`，每 5 分钟正常轮转。
 
 ---
