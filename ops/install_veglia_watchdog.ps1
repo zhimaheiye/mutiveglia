@@ -47,7 +47,10 @@ function Get-Ns {
     param($Doc)
     $m = New-Object System.Xml.XmlNamespaceManager($Doc.NameTable)
     $m.AddNamespace('t', $nsUri)
-    return $m
+    # comma-wrap: XmlNamespaceManager implements IEnumerable, so a bare `return $m` is
+    # flattened by the PowerShell pipeline into its 3-4 declared namespace STRINGS, and the
+    # caller's SelectSingleNode($xpath, $m) then fails to bind ("overload count is 2").
+    return ,$m
 }
 
 function Read-TaskXml {
