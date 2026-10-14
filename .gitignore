@@ -27,3 +27,4 @@ logs/
 *.bak
 *.backup
 *.pre-v2-backup
+ops/backup/
