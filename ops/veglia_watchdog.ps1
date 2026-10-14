@@ -422,13 +422,16 @@ try {
     # phase 2: act, Core before MCP
     foreach ($s in $Services) {
         $st = $script:State.services[$s.Key]
-        if ($s.DependsOn -and -not $script:State.services[$s.DependsOn].lastOk) {
-            Write-Log 'ACTION' ("$($s.Key) SKIP_DEPENDENCY $($s.DependsOn) unhealthy - Core is recovered first")
-            continue
-        }
+        # Healthy first: a service that answers /health must never be logged as if it needed
+        # recovery, even while its dependency is down (that used to print a misleading
+        # "mcp SKIP_DEPENDENCY" line on every round where only the Core was broken).
         if ($st.lastOk) {
             Complete-ServiceRecoveryNotice -Svc $s
             Invoke-PersistentDependencyAlert -Svc $s
+            continue
+        }
+        if ($s.DependsOn -and -not $script:State.services[$s.DependsOn].lastOk) {
+            Write-Log 'ACTION' ("$($s.Key) SKIP_DEPENDENCY $($s.DependsOn) unhealthy - Core is recovered first")
             continue
         }
         if (-not $Force -and $st.failStreak -lt $FailStreakThreshold) {
